@@ -21,7 +21,7 @@ export function bridgeAccuracy(
     .get(taskId) as Record<string, string> | undefined;
   if (!predRow) return { accuracy: null, updated: false, shouldWarn: false };
 
-  const expected: string[] = JSON.parse(predRow['expected_files']);
+  const expected: string[] = JSON.parse(predRow['expected_files']!);
   const intersect = expected.filter(f => actualFiles.includes(f)).length;
   const union = new Set([...expected, ...actualFiles]).size;
   const accuracy = union > 0 ? intersect / union : 1;

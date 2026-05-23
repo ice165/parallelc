@@ -40,7 +40,7 @@ export function updatePredictionRecord(
 
   if (!row) return;
 
-  const expected: string[] = JSON.parse(row['expected_files']);
+  const expected: string[] = JSON.parse(row['expected_files']!);
   const intersect = expected.filter(f => actualFiles.includes(f)).length;
   const union = new Set([...expected, ...actualFiles]).size;
   const accuracy = union > 0 ? intersect / union : 1;
@@ -62,11 +62,11 @@ export function getPredictionAccuracy(
   `).all() as Record<string,string>[];
 
   const details = rows.map(r => ({
-    taskId: r['task_id'],
+    taskId: r['task_id']!,
     expectedFiles: JSON.parse(r['expected_files'] ?? '[]'),
     actualFiles: r['actual_files'] ? JSON.parse(r['actual_files']) : null,
     accuracy: r['accuracy'] ? Number(r['accuracy']) : null,
-    recordedAt: r['recorded_at'],
+    recordedAt: r['recorded_at']!,
   }));
 
   const withAccuracy = details.filter(d => d.accuracy !== null);

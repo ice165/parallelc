@@ -104,8 +104,8 @@ describe('WorkerPool', () => {
     expect(spawnMcpWorker).toHaveBeenCalledWith(
       expect.objectContaining({
         apiKey: 'sk-test',
-        cwd: '/tmp/worker-task-env-001-write',
-        readonlyRoot: '/tmp/worker-task-env-001-readonly',
+        cwd: '/tmp/worker-test-001-write',
+        readonlyRoot: '/tmp/worker-test-001-readonly',
       }),
       expect.objectContaining({
         taskId: 'task-env-001',

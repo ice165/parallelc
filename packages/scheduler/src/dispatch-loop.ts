@@ -193,9 +193,9 @@ export function reapTick(
     });
 
     switch (action.type) {
-      case 'MARK_DONE':
+      case 'MARK_DONE': {
         updateTask(db, task.id, task.version, { modified_files: action.modifiedFiles });
-        casUpdateStatus(db, task.id, task.version, 'RUNNING', 'DONE');
+        casUpdateStatus(db, task.id, task.version + 1, 'RUNNING', 'DONE');
         pool.getKeyPool().markSuccess(entry.apiKey);
         // 合并必须在清理 Worktree 之前，因为 mergeTask 需读取 write worktree
         const workerId = entry.workerId;
@@ -220,6 +220,7 @@ export function reapTick(
         });
         result.done++;
         break;
+      }
 
       case 'CHECKPOINT':
         casUpdateStatus(db, task.id, task.version, 'RUNNING', 'CHECKPOINT_PENDING');

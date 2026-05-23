@@ -8,3 +8,4 @@ dist/
 .claude/
 *.docx
 plan_output.txt
+.node/

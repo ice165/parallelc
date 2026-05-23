@@ -1,5 +1,10 @@
 jest.mock('../src/mcp-client', () => ({
-  spawnMcpWorker: jest.fn(),
+  spawnMcpWorker: jest.fn(() => ({
+    on: jest.fn(),
+    stdin: { write: jest.fn(), end: jest.fn() },
+    stdout: { on: jest.fn() },
+    stderr: { on: jest.fn() },
+  })),
   buildWorkerSystemPrompt: jest.fn(() => 'mock-prompt'),
 }));
 

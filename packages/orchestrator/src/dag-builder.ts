@@ -57,20 +57,28 @@ export async function buildDAG(
   };
 
   // 2. LLM Decompose (with retry)
-  let decomposerResult = await decomposeViaClaude(fullInput, { apiKey: opts.apiKey });
-  while (!decomposerResult.parsed && retries < maxRetries) {
-    retries++;
-    lastError = new Error(`LLM decomposition failed (attempt ${retries})`);
-    opts.onRetry?.(retries, lastError.message);
-    decomposerResult = await decomposeViaClaude(fullInput, { apiKey: opts.apiKey });
+  let decomposerResult: Awaited<ReturnType<typeof decomposeViaClaude>> | null = null;
+  while (retries <= maxRetries) {
+    try {
+      decomposerResult = await decomposeViaClaude(fullInput, { apiKey: opts.apiKey });
+      if (decomposerResult.parsed) break;
+      retries++;
+      lastError = new Error(`LLM decomposition failed (attempt ${retries})`);
+      opts.onRetry?.(retries, lastError.message);
+    } catch (err) {
+      retries++;
+      lastError = err instanceof Error ? err : new Error(String(err));
+      opts.onRetry?.(retries, lastError.message);
+      if (retries > maxRetries) break;
+    }
   }
 
-  if (!decomposerResult.parsed) {
+  if (!decomposerResult?.parsed) {
     return {
       dagId: '', summary: '', tasksCreated: 0, l1Executed: 0, l1Skipped: 0,
       l3Pending: 0, l3PendingTasks: [], failedTasks: 0,
       error: `Failed after ${retries} retries: ${lastError?.message ?? 'parse error'}`,
-      tokensUsed: decomposerResult.tokensUsed, retries, cached: decomposerResult.cached,
+      tokensUsed: decomposerResult?.tokensUsed ?? 0, retries, cached: decomposerResult?.cached ?? false,
     };
   }
 

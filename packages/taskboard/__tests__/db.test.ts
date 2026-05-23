@@ -1,13 +1,14 @@
 import Database from 'better-sqlite3';
 import { getDb, initializeSchema, closeDb } from '../src/db';
 import path from 'path';
-import os from 'os';
+import fs from 'fs';
+import { tmpdir } from 'os';
 
 let dbPath: string;
 let dbPath2: string;
 
 beforeEach(() => {
-  const tmpDir = os.mkdtempSync(path.join(os.tmpdir(), 'parallelc-db-'));
+  const tmpDir = fs.mkdtempSync(path.join(tmpdir(), 'parallelc-db-'));
   dbPath = path.join(tmpDir, 'test.db');
   dbPath2 = path.join(tmpDir, 'test2.db');
 });

@@ -1,5 +1,5 @@
 import { mergeTask } from '../src/merge-strategy';
-import { getDb, initializeSchema, createTask, casUpdateStatus, queryTasksByStatus } from '@parallelc/taskboard';
+import { getDb, initializeSchema, createTask, casUpdateStatus, queryTasksByStatus, closeDb } from '@parallelc/taskboard';
 import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
@@ -16,11 +16,12 @@ beforeEach(() => {
   fs.writeFileSync(path.join(repoRoot, 'main.ts'), 'export const VERSION = 1;');
   execSync('git add -A && git commit -m init', { cwd: repoRoot });
 
-  // 模拟 Worker 分支（写区）
-  execSync('git checkout -b worker-t1', { cwd: repoRoot });
-  fs.writeFileSync(path.join(repoRoot, 'new.ts'), 'export const NEW = true;');
-  execSync('git add -A && git commit -m worker', { cwd: repoRoot });
-  execSync('git checkout main', { cwd: repoRoot });
+  // 模拟 Worker Worktree（写区）
+  const worktreePath = path.join(repoRoot, 'worktrees', 'worker-t1-write');
+  fs.mkdirSync(path.dirname(worktreePath), { recursive: true });
+  execSync(`git worktree add --detach "${worktreePath}"`, { cwd: repoRoot });
+  fs.writeFileSync(path.join(worktreePath, 'new.ts'), 'export const NEW = true;');
+  execSync('git add -A && git commit -m worker', { cwd: worktreePath });
 
   dbPath = path.join(repoRoot, 'test.db');
 });
@@ -45,6 +46,7 @@ describe('mergeTask', () => {
     expect(result.success).toBe(true);
     expect(result.strategy).toBe('AUTO');
     expect(fs.existsSync(path.join(repoRoot, 'new.ts'))).toBe(true);
+    closeDb(dbPath);
     db.close();
   });
 });

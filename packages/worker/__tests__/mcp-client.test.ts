@@ -44,6 +44,8 @@ describe('buildWorkerSystemPrompt', () => {
 describe('spawnMcpWorker', () => {
   beforeEach(() => {
     jest.useFakeTimers();
+    mockProcess.kill.mockClear();
+    mockProcess.removeAllListeners();
   });
 
   afterEach(() => {

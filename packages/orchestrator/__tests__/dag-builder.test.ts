@@ -1,6 +1,6 @@
 import { buildDAG } from '../src/dag-builder';
 import type { DecompositionInput } from '../src/decompose/prompt-builder';
-import { getDb, initializeSchema, queryTasksByStatus } from '@parallelc/taskboard';
+import { getDb, initializeSchema, queryTasksByStatus, closeDb } from '@parallelc/taskboard';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -94,5 +94,6 @@ describe('buildDAG', () => {
     expect(result.retries).toBe(1);
     expect(onRetry).toHaveBeenCalledWith(1, expect.any(String));
     expect(result.tasksCreated).toBe(1);
+    closeDb(dbPath);
   });
 });

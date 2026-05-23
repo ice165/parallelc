@@ -72,9 +72,9 @@ describe('validatePaths', () => {
     expect(result.invalid).toHaveLength(0);
   });
 
-  test('nonexistent file -> invalid', () => {
-    const result = validatePaths(['src/api/nope.ts'], repoContext, moduleMap, repoRoot);
-    expect(result.invalid).toContain('src/api/nope.ts');
+  test('nonexistent parent dir -> invalid', () => {
+    const result = validatePaths(['nonexistent/dir/file.ts'], repoContext, moduleMap, repoRoot);
+    expect(result.invalid).toContain('nonexistent/dir/file.ts');
   });
 
   test('file outside moduleMap -> withWarnings', () => {

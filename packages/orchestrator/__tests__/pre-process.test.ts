@@ -1,6 +1,7 @@
 import { scanRepoContext } from '../src/pre-process/repo-scanner';
 import { extractModuleMap } from '../src/pre-process/module-map';
 import { estimateTokens } from '../src/pre-process/token-estimator';
+import { initializeSchema } from '@parallelc/taskboard';
 import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
@@ -12,6 +13,7 @@ let db: Database.Database;
 beforeEach(() => {
   repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'parallelc-orch-pre-'));
   db = new Database(':memory:');
+  initializeSchema(db);
   fs.mkdirSync(path.join(repoRoot, 'src/api'), { recursive: true });
   fs.mkdirSync(path.join(repoRoot, 'src/models'), { recursive: true });
   fs.mkdirSync(path.join(repoRoot, 'src/utils'), { recursive: true });
@@ -61,7 +63,8 @@ describe('extractModuleMap', () => {
     const modules = extractModuleMap(ctx, repoRoot);
     const modelsModule = modules.find(m => m.dir === 'src/models');
     expect(modelsModule).toBeDefined();
-    expect(modelsModule!.imports.length).toBeGreaterThan(0);
+    expect(modelsModule!.files).toContain('src/models/user.ts');
+    expect(modelsModule!.exportedSymbols).toContain('User');
   });
 });
 

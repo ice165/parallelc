@@ -101,6 +101,6 @@ status: ACTIVE`;
     });
 
     expect(result.versionMatch).toBe(true);
-    expect(result.warnings).toContain('project_context.md status is not FROZEN');
+    expect(result.warnings).toContain('project_context.md status is not FROZEN: ACTIVE');
   });
 });

@@ -35,11 +35,14 @@ export async function mergeTask(
 
   try {
     // Phase 1: AUTO — 从 Worker 的 write worktree 合并到主仓库
-    // 使用 worktree 路径而非分支名：Worker 的修改已提交到该 worktree 的 HEAD
-    execSync(`git merge --no-ff --no-edit ${workerWorktree}`, {
+    const workerHead = execSync(`git -C "${workerWorktree}" rev-parse HEAD`, {
+      stdio: 'pipe', timeout: 10_000,
+    }).toString().trim();
+    execSync(`git merge --no-ff --no-edit ${workerHead}`, {
       cwd: repoRoot, stdio: 'pipe', timeout: 30_000,
     });
-    const modFiles = task['modified_files'] ? JSON.parse(task['modified_files'] as string) : [];
+    const taskRow = db.prepare('SELECT modified_files FROM tasks WHERE id = ?').get(taskId) as Record<string, unknown> | undefined;
+    const modFiles = taskRow?.['modified_files'] ? JSON.parse(taskRow['modified_files'] as string) : [];
     return {
       success: true,
       strategy: 'AUTO',
@@ -51,8 +54,8 @@ export async function mergeTask(
     const conflictFiles = getConflictFiles(repoRoot);
 
     if (conflictFiles.length === 0) {
-      // git merge 失败但无冲突文件 → 其他错误（如无 worker 分支）
-      execSync('git merge --abort', { cwd: repoRoot, stdio: 'pipe' });
+      // git merge 失败但无冲突文件 → 其他错误
+      try { execSync('git merge --abort', { cwd: repoRoot, stdio: 'pipe' }); } catch { /* 无 merge 可 abort */ }
       return {
         success: false, strategy: 'BLOCKED', mergedFiles: [], conflicts: [], reportPath: null,
       };
