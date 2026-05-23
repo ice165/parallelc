@@ -103,6 +103,13 @@ describe('queryTasksByStatus', () => {
     expect(queryTasksByStatus(db, 'READY')).toHaveLength(1);
   });
 
+  test('按多个状态查询', () => {
+    createTask(db, { id: 't1', title: 'T1', level: 'L2' });
+    createTask(db, { id: 't2', title: 'T2', level: 'L2' });
+    const tasks = queryTasksByStatus(db, ['PENDING', 'READY']);
+    expect(tasks).toHaveLength(2);
+  });
+
   test('非法 orderBy 使用默认排序', () => {
     createTask(db, { id: 't1', title: 'T1', level: 'L2' });
     createTask(db, { id: 't2', title: 'T2', level: 'L2' });

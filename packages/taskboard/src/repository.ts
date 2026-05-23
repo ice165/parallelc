@@ -208,8 +208,8 @@ export function propagateDagFailure(
   failedTaskId: string,
 ): number {
   const rows = db.prepare(
-    `SELECT id FROM tasks WHERE dependencies LIKE ? AND status NOT IN ('DONE', 'FAILED', 'CANCELLED')`,
-  ).all(`%"${failedTaskId}"%`) as Record<string, unknown>[];
+    `SELECT id FROM tasks WHERE dependencies LIKE '%' || ? || '%' AND status NOT IN ('DONE', 'FAILED', 'CANCELLED')`,
+  ).all(failedTaskId) as Record<string, unknown>[];
 
   let count = 0;
   for (const row of rows) {
