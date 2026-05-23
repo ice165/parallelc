@@ -5,3 +5,6 @@ dist/
 *.db-wal
 *.db-shm
 .env
+.claude/
+*.docx
+plan_output.txt
