@@ -1,9 +1,10 @@
 # ParallelC Phase 2 — 通信总线与调度左移 设计文档
 
 **项目代号**：ParallelC
-**文档版本**：v1.0
+**文档版本**：v1.1
 **日期**：2026-05-23
 **基于**：Phase 1 交付版 + claude code并行Agentv1.5.docx §5 Phase 2
+**审查版本**：v1.1（2026-05-23 代码审查修订）
 
 ---
 
@@ -78,9 +79,10 @@ packages/
 export interface McpClientOptions {
   apiKey: string;
   model?: 'haiku' | 'sonnet' | 'opus';
-  cwd: string;                    // Worker 写区路径
-  readonlyRoot: string;           // 只读区路径
-  maxRounds?: number;             // 默认 30
+  cwd: string;
+  readonlyRoot: string;
+  maxRounds?: number;             // 默认 30，触发 EXIT_CHECKPOINT
+  timeoutMs?: number;             // 默认 600_000（10分钟），触发 EXIT_TIMEOUT
 }
 
 export interface McpTaskContext {
@@ -91,7 +93,13 @@ export interface McpTaskContext {
 
 /**
  * 启动 MCP stdio 子进程连接 Claude Code。
- * 返回 ChildProcess，Scheduler 在 reap 阶段检查退出状态。
+ * 返回 ChildProcess，设置了 timeoutMs 的 Watchdog。
+ *
+ * Watchdog 超时机制：
+ *   内部 setTimeout(timeoutMs) 监控子进程。
+ *   - 正常退出：clearTimeout，exitCode 由子进程设置
+ *   - 超时：SIGTERM（5s 宽限期）→ SIGKILL
+ *     reapTick 检测到 exitCode === null → 视为 EXIT_TIMEOUT → FAILED
  */
 export function spawnMcpWorker(
   opts: McpClientOptions,
@@ -135,9 +143,10 @@ const STARVATION_THRESHOLD_MS = 300_000;
 export interface SchedulerConfig {
   dbPath: string;
   repoRoot: string;
-  maxWorkers?: number;
-  starvationThresholdMs?: number;
-  tickIntervalMs?: number;
+  apiKeys: string[];              // API Key 池，Worker 轮询使用
+  maxWorkers?: number;            // 默认 4
+  starvationThresholdMs?: number; // 默认 300_000
+  tickIntervalMs?: number;        // 默认 2_000
 }
 
 export interface DispatchResult {
@@ -209,6 +218,63 @@ for task in queryTasksByStatus(db, 'READY'):
 | 跨轮保护 | 每轮头部 `getLockedFiles(db)` | 跨调度周期 | 是 |
 | 本轮保护 | CAS 成功后 `lockedFiles.add()` | 同轮竞态窗口 | 是（跨轮兜底） |
 
+**reapTick 退出码处理完整映射**：
+
+```
+reapTick(db, pool):
+  for entry in pool.reap():
+    exitCode = entry.process.exitCode
+    if exitCode === null:
+      // Watchdog 杀死的进程，exitCode 尚未被设置
+      exitCode = EXIT_TIMEOUT
+    task = queryTaskById(db, entry.taskId)
+    action = routeExitCode({
+      taskId: task.id,
+      exitCode,
+      writeRoot: entry.writeRoot,
+      rateLimitCount: task.rate_limit_count,
+    })
+
+    switch action.type:
+      'MARK_DONE':
+        updateTask(db, task.id, task.version, {
+          modified_files: action.modifiedFiles
+        })
+        casUpdateStatus(RUNNING → DONE)
+        cleanupWorktrees(entry.workerId, repoRoot)
+        done++
+
+      'CHECKPOINT':
+        casUpdateStatus(RUNNING → CHECKPOINT_PENDING)
+        checkpointed++
+        // Phase 2: CHECKPOINT_PENDING 在 nextTick 由 Scheduler
+        // 重新注入上下文后转为 READY 重派
+
+      'FAILED':
+        casUpdateStatus(RUNNING → FAILED)
+        propagateDagFailure(db, task.id)
+        cleanupWorktrees(entry.workerId, repoRoot)
+        failed++
+        // 重试决策：
+        //   - EXIT_TIMEOUT (11): 自动重试一次（Scheduler 创建新 READY 任务）
+        //   - rate_limit_exhausted: 永久 FAILED，不重试
+        //   - HOOK_BLOCKED (12): 永久 FAILED，需人工审查
+
+      'RATE_LIMIT_SLEEP':
+        updateTask(db, task.id, task.version, {
+          rate_limit_count: action.attempt,
+          sleep_until: action.wakeAt.toISOString(),
+        })
+        casUpdateStatus(RUNNING → SLEEP_PENDING)
+        cleanupWorktrees(entry.workerId, repoRoot)
+        sleeping++
+
+      'HOOK_BLOCKED':
+        casUpdateStatus(RUNNING → FAILED)
+        cleanupWorktrees(entry.workerId, repoRoot)
+        failed++
+```
+
 ### 4.4 @parallelc/scheduler — worker-pool.ts
 
 ```typescript
@@ -223,16 +289,41 @@ export interface WorkerEntry {
 }
 
 export class WorkerPool {
-  constructor(maxWorkers: number = 4);
+  private apiKeys: string[];
+  private keyIndex: number = 0;
+
+  constructor(apiKeys: string[], maxWorkers: number = 4);
 
   get activeCount(): number;
   hasCapacity(): boolean;
 
   /**
-   * 启动 Worker：
-   *   spawnWorker() → spawnMcpWorker() → 注册 Map
+   * 轮询获取下一个 API Key。
+   * nextKey() 循环递增 keyIndex，到达末尾回绕。
    */
-  spawn(task: Task, apiKey: string, repoRoot: string): WorkerEntry;
+  private nextKey(): string;
+
+  /**
+   * 启动 Worker。完整流程：
+   *
+   *   1. workerId = `worker-${task.id}`
+   *   2. result = spawnWorker({ workerId, expectedTouchFiles, repoRoot, apiKey })
+   *      → 创建双 Worktree，返回 readonlyRoot / writeRoot
+   *   3. 构建环境变量（注入给子进程）：
+   *        WORKER_ID=workerId
+   *        WORKER_WRITE_ROOT=result.writeRoot
+   *        WORKER_READONLY_ROOT=result.readonlyRoot
+   *        ANTHROPIC_API_KEY=apiKey
+   *        TASK_ID=task.id
+   *        SNAPSHOT_VERSION=task.snapshot_version
+   *     这些环境变量是 validateWriteHook（Phase 1）正常工作的前提：
+   *     hook.ts 从 process.env 读取 WORKER_ID 和 WORKER_WRITE_ROOT，
+   *     缺失时直接放行（非 Worker 环境），必须注入才能激活写保护。
+   *   4. process = spawnMcpWorker({ apiKey, cwd, readonlyRoot, maxRounds, timeoutMs }, context)
+   *      → 启动 MCP 子进程，继承上述环境变量
+   *   5. 注册 Map: workerId → { workerId, taskId, process, startedAt, writeRoot }
+   */
+  spawn(task: Task, repoRoot: string): WorkerEntry;
 
   /** 返回已退出进程列表，从 Map 中移除 */
   reap(): WorkerEntry[];
@@ -245,7 +336,7 @@ export class WorkerPool {
 }
 ```
 
-### 4.5 CLI + context-generator
+### 4.5 context-generator
 
 ```typescript
 // context-generator.ts
@@ -256,12 +347,44 @@ export interface ContextSnapshot {
   status: 'FROZEN';
   files: string[];
   taskIds: string[];
-  architecture: string;
+  architecture: string;  // Phase 3: 接入 LLM 生成架构摘要，当前填充项目 README 首段
 }
 
 /**
- * 生成 project_context.md。
- * 使用 BEGIN IMMEDIATE 事务保护写入，获取失败则放弃并 WARNING。
+ * 扫描仓库根目录，收集结构信息以生成 project_context.md。
+ * 递归遍历，跳过 node_modules、.git、dist、.parallelc。
+ */
+function scanRepoFiles(repoRoot: string): string[];
+
+/**
+ * 生成 project_context.md 快照。
+ *
+ * 完整代码路径：
+ *
+ *   // 1. BEGIN IMMEDIATE 事务 —— 文件级写互斥
+ *   db.prepare('BEGIN IMMEDIATE').run();
+ *   try {
+ *     // 2. 构造快照内容
+ *     const header = `snapshot_version: ${dagId}-${timestamp}
+ * generated_at: ${new Date().toISOString()}
+ * status: FROZEN`;
+ *     const body = scanRepoFiles(repoRoot).map(f => `- ${f}`).join('\n');
+ *     const content = `${header}\n\n## Files\n${body}`;
+ *
+ *     // 3. 写入文件（fs.writeFileSync）
+ *     fs.writeFileSync(`${repoRoot}/.parallelc/project_context.md`, content);
+ *
+ *     // 4. 提交事务
+ *     db.prepare('COMMIT').run();
+ *   } catch (err) {
+ *     // 5. 回滚 + WARNING
+ *     db.prepare('ROLLBACK').run();
+ *     log.warn('Failed to write project_context.md', err);
+ *     return null;
+ *   }
+ *
+ * 获取失败策略：放弃本次更新，记录 WARNING 告警，返回 null。
+ * 上一个版本快照保持有效，Worker 启动时校验会检测到版本偏差。
  */
 export function generateContextSnapshot(
   db: Database.Database,
@@ -269,6 +392,34 @@ export function generateContextSnapshot(
   tasks: Task[],
   repoRoot: string,
 ): ContextSnapshot | null;
+```
+
+### 4.6 CLI
+
+```typescript
+// cli.ts — bin 入口
+
+/**
+ * 命令行：
+ *   npx parallelc-scheduler start --repo /repo --api-keys sk-xxx,sk-yyy
+ *   npx parallelc-scheduler status --db .parallelc/taskboard.db
+ *
+ * status 输出格式：
+ *
+ *   Tick: 42 | Pool: 3/4 | Ready: 2 | Running: 3 | Sleep: 1 | Done: 12 | Failed: 0
+ *   ──────────────────────────────────────────────────────────────────────────────
+ *   RUNNING
+ *     worker-task-001  task-001   32s  MCP 活跃
+ *     worker-task-003  task-003   15s  MCP 活跃
+ *     worker-task-005  task-005   98s  MCP 活跃
+ *   SLEEP_PENDING
+ *     task-004  429 rate-limit  唤醒: 2026-07-01T10:02:00Z
+ *   READY（待派发: 2）
+ *     task-006  等待: 45s  (被 task-005 锁: src/api/user.ts)
+ *     task-007  等待: 12s  (被 task-005 锁: src/models/db.ts)
+ *   FAILED（最近 3 条）
+ *     task-002  rate_limit_exhausted  2026-07-01T09:58:00Z
+ */
 ```
 
 ---
