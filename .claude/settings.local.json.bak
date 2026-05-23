@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:github.com)",
+      "Bash(gh repo *)",
+      "Bash(git clone *)",
+      "Bash(claude /plugin marketplace add forrestchang/andrej-karpathy-skills)",
+      "Bash(npx --yes @anthropic-ai/claude-code /plugin marketplace add forrestchang/andrej-karpathy-skills)",
+      "Bash(where claude *)",
+      "Bash(mkdir -p \"C:/Users/ASUS/.claude/plugins/marketplaces/forrestchang-andrej-karpathy-skills/.claude-plugin\")",
+      "Bash(cp /tmp/marketplace-temp/.claude-plugin/marketplace.json \"C:/Users/ASUS/.claude/plugins/marketplaces/forrestchang-andrej-karpathy-skills/.claude-plugin/\")",
+      "Bash(cp /tmp/marketplace-temp/.claude-plugin/plugin.json \"C:/Users/ASUS/.claude/plugins/marketplaces/forrestchang-andrej-karpathy-skills/.claude-plugin/\")",
+      "Bash(cp -r /tmp/marketplace-temp/skills \"C:/Users/ASUS/.claude/plugins/marketplaces/forrestchang-andrej-karpathy-skills/\")",
+      "Bash(mkdir -p \"C:/Users/ASUS/.claude/plugins/cache/forrestchang-andrej-karpathy-skills/karpathy-skills/1.0.0\")",
+      "Bash(npm list *)"
+    ]
+  }
+}

@@ -4,6 +4,7 @@
 **文档版本**：v1.0
 **日期**：2026-05-23
 **基于**：claude code并行Agentv1.5.docx
+**审查版本**：v1.1（2026-05-23 代码审查修订）
 
 ---
 
@@ -25,6 +26,7 @@ Phase 1 的目标是搭建 ParallelC 的 TypeScript monorepo 骨架，并实现�
 | 语言 | TypeScript (strict) | 与 Claude Code MCP 生态一致，全栈统一 |
 | 包管理 | pnpm workspaces | Monorepo，组件独立 package，边界清晰 |
 | 数据库 | better-sqlite3 | 同步 API，与 Scheduler 单实例单线程模型一致；WAL 模式 |
+| 文件锁 | better-sqlite3 `BEGIN IMMEDIATE` | `project_context.md` 写入保护：利用已有 DB 层实现文件级互斥，不引入新的 native 依赖。获取失败则放弃本次更新并记录 WARNING 告警 |
 | 测试 | Jest + ts-jest | 成熟生态，mock 能力强 |
 | 运行 | tsx (dev) / tsup (build) | 开发期直接运行 TS，生产构建用 esbuild |
 | 构建 | tsup | 每个包独立构建为 CJS + ESM |
@@ -117,6 +119,7 @@ type TaskLevel = 'L1' | 'L2' | 'L3';
 
 interface Task {
   id, title, status, version,
+  level,                          // TaskLevel — L1/L2/L3，L1 不进入 TaskBoard
   expected_touch_files, modified_files,
   rate_limit_count, sleep_until,
   starvation_override, snapshot_version, context_mismatch,
@@ -155,24 +158,38 @@ verifySnapshotVersion(opts: StartupCheckOptions): StartupCheckResult
 parseProjectContextHeader(content: string): { snapshotVersion, generatedAt, status } | null
 
 // lifecycle.ts
-routeExitCode(opts: OnWorkerExitOptions): ExitAction
-collectModifiedFiles(writeRoot: string): string[]
-calculateRateLimitBackoff(attempt: number, maxRetries?: number): { wakeAt, exceeded }
+routeExitCode(opts: OnWorkerExitOptions): ExitAction    // Phase 1 骨架，Phase 2+ 补充 Scheduler 重试决策
+collectModifiedFiles(writeRoot: string): string[]       // Phase 1
+calculateRateLimitBackoff(attempt: number, ...): { ... } // Phase 3+（429 指数退避 + 抖动）
 ```
 
 **双 Worktree 创建流程**：
 1. `git worktree add {readonlyRoot} {baseBranch}` — 完整检出
 2. `git worktree add --no-checkout {writeRoot} {baseBranch}`
-3. `cd {writeRoot} && git sparse-checkout init --cone`
-4. `git sparse-checkout set {dirnames} && git checkout {baseBranch}`
-5. 环境变量注入 `WORKER_READONLY_ROOT`、`WORKER_WRITE_ROOT`
+3. 从 `expectedTouchFiles` 提取唯一目录名：`const dirnames = [...new Set(expectedTouchFiles.map(f => path.dirname(f)))];`
+4. `cd {writeRoot} && git sparse-checkout init --cone`
+5. `git sparse-checkout set {dirnames} && git checkout {baseBranch}`
+6. 环境变量注入 `WORKER_READONLY_ROOT`、`WORKER_WRITE_ROOT`
+
+**⚠️ 已知局限：双 Worktree 运行期上下文过期（v1.5 阶段可接受）**
+
+Worker 的只读 Worktree 在创建时固定检出，不跟随主仓库 `main` 的推进自动更新。当并发执行的其他 Worker 完成合入后，当前 Worker 读到的只读区代码可能已过时。此局限在 v1.5 阶段可接受，原因：
+- 实际写入发生在隔离的稀疏写区，与只读区物理分离
+- 最终代码集成由 Merge Coordinator 统一处理（Phase 3）
+- 长生命周期任务可选择性执行 `git fetch` 刷新关键文件
+
+**推荐应对策略（面向长生命周期任务）**：
+```bash
+git -C $WORKER_READONLY_ROOT fetch origin main
+git -C $WORKER_READONLY_ROOT checkout origin/main -- src/api/user.ts
+```
 
 **退出码路由**：
 | 退出码 | 动作 | 说明 |
 |--------|------|------|
 | 0 | MARK_DONE | 采集 modified_files |
 | 10 | CHECKPOINT | 保留上下文等待重派 |
-| 11 | RETRY | 自动重试一次 |
+| 11 | FAILED | 进程超时，标记 FAILED，由 Scheduler 决策是否重试 |
 | 12 | HOOK_BLOCKED | 记录违规标记 FAILED |
 | 13 | RATE_LIMIT_SLEEP | 指数退避 + ±30s 抖动，第6次 FAILED |
 
@@ -180,7 +197,7 @@ calculateRateLimitBackoff(attempt: number, maxRetries?: number): { wakeAt, excee
 
 ```typescript
 // schema.ts
-TASK_TABLE_DDL        // CREATE TABLE + 4 索引
+TASK_TABLE_DDL        // CREATE TABLE + 5 索引（含 level TEXT 字段，L1/L2/L3）
 VALID_STATUSES        // 9 个合法状态
 ALLOWED_TRANSITIONS   // from → to[] 状态转换表
 
@@ -190,18 +207,79 @@ initializeSchema(db): void
 closeDb(): void
 
 // repository.ts
-casUpdateStatus(db, taskId, expectedVersion, fromStatus, toStatus, extra?): boolean
-createTask(db, task): Task
-queryTasksByStatus(db, status, orderBy?): Task[]
-getLockedFiles(db): Set<string>
-wakeSleepingTasks(db): number
-updateTask(db, taskId, expectedVersion, fields): boolean
-propagateDagFailure(db, failedTaskId): number
+casUpdateStatus(db, taskId, expectedVersion, fromStatus, toStatus, extra?): boolean // Phase 1
+createTask(db, task): Task                                                        // Phase 1
+queryTasksByStatus(db, status, orderBy?): Task[]                                  // Phase 1
+getLockedFiles(db): Set<string>                                                   // Phase 1（跨轮保护核心）
+wakeSleepingTasks(db): number                                                     // Phase 3+（429 退避唤醒）
+updateTask(db, taskId, expectedVersion, fields): boolean                          // Phase 1
+propagateDagFailure(db, failedTaskId): number                                     // Phase 3+（DAG 失败传播）
 ```
 
 **CAS 乐观锁**：所有状态变更附带 `expectedVersion`，WHERE 子句包含 `version = ?`，成功则 `version + 1`。这是调度层稳定性核心保证。
 
 **WAL 模式**：读写并发不互斥，适合调度循环高频读取场景。
+
+**两层保护机制 — dispatch_loop 伪代码**（Phase 2 完整实现，Phase 1 预留在 repository.ts）：
+
+```typescript
+// 此伪代码描述 Scheduler dispatch_loop 的两层保护逻辑
+// Phase 1: getLockedFiles() + casUpdateStatus() 在 taskboard 包中实现
+// Phase 2: 完整 dispatch_loop 在 scheduler 包中实现
+
+const STARVATION_THRESHOLD_MS = 300_000; // 5 分钟
+
+function dispatchLoop(db: Database, workerPool: WorkerPool): void {
+  while (true) {
+    // ═══ 跨轮保护 ═══════════════════════════════════════════════
+    // 每轮循环头部从 DB 重建 locked_files。
+    // 崩溃重启后 locked_files 自动从 DB 恢复，不存在幽灵锁。
+    // getLockedFiles() 查询 status IN ('RUNNING', 'SLEEP_PENDING')。
+    const lockedFiles = getLockedFiles(db);
+
+    const readyTasks = queryTasksByStatus(db, 'READY');
+
+    for (const task of readyTasks) {
+      const taskExpected = new Set(task.expected_touch_files ?? []);
+      const conflicting = [...taskExpected].filter(f => lockedFiles.has(f));
+
+      if (conflicting.length > 0) {
+        const waited = Date.now() - new Date(task.ready_at!).getTime();
+        if (waited > STARVATION_THRESHOLD_MS) {
+          // 饥饿保护：强制派发，标记 starvation_override=true
+          log.warn(`[STARVATION] Task ${task.id} waited ${waited}ms`);
+        } else {
+          log.info(`[MUTEX] Task ${task.id} delayed on ${conflicting}`);
+          continue; // 本轮跳过，等待下一轮
+        }
+      }
+
+      if (workerPool.hasCapacity()) {
+        const ok = casUpdateStatus(db, task.id, task.version, 'READY', 'RUNNING', {
+          starvation_override: task.starvation_override,
+        });
+        if (ok) {
+          workerPool.spawn(task);
+          // ═══ 本轮保护 ═════════════════════════════════════════
+          // CAS 成功后立即更新本轮内存 locked_files，防止同一轮内
+          // 声明相同文件的另一个 READY 任务也通过检查被重复派发。
+          // 安全性：此更新仅影响当前轮次；下轮循环仍以 DB 为准重建。
+          for (const f of taskExpected) lockedFiles.add(f);
+        }
+      }
+    }
+
+    sleep(2_000); // 调度间隔
+  }
+}
+```
+
+**两层保护总结**：
+
+| 保护层 | 实现方式 | 保护范围 | 崩溃安全 |
+|--------|---------|---------|---------|
+| 跨轮保护 | 每轮循环头部从 DB 重建 `locked_files` | 跨调度周期的状态一致性 | 是 |
+| 本轮保护 | CAS 成功后立即更新本轮内存 `locked_files` | 同一轮循环内的竞态窗口 | 是（内存丢失后跨轮保护兜底） |
 
 ---
 
