@@ -4,6 +4,15 @@ import Database from 'better-sqlite3';
 import { initializeSchema, createTask, casUpdateStatus, queryTasksByStatus, getLockedFiles } from '@parallelc/taskboard';
 import { EXIT_SUCCESS, EXIT_RATE_LIMIT, EXIT_TIMEOUT } from '@parallelc/shared';
 
+// Mock @parallelc/coordinator
+jest.mock('@parallelc/coordinator', () => ({
+  coordinateMerge: jest.fn().mockResolvedValue({
+    mergeResult: { strategy: 'fast-forward' },
+    accuracyUpdated: false,
+    downstreamTriggered: [],
+  }),
+}));
+
 // Mock @parallelc/keypool
 jest.mock('@parallelc/keypool', () => ({
   KeyPool: jest.fn().mockImplementation((keys: string[]) => ({
@@ -179,7 +188,7 @@ describe('reapTick', () => {
     };
     (pool as unknown as Record<string, Map<string, unknown>>)['workers'].set('worker-t1', workerEntry);
 
-    const result = reapTick(db, pool, '/repo');
+    const result = reapTick(db, pool, '/repo', '/tmp/test.db');
     expect(result.done).toBe(1);
 
     const tasks = queryTasksByStatus(db, 'DONE');
@@ -214,7 +223,7 @@ describe('reapTick', () => {
     };
     (pool as unknown as Record<string, Map<string, unknown>>)['workers'].set('worker-t1', workerEntry);
 
-    const result = reapTick(db, pool, '/repo');
+    const result = reapTick(db, pool, '/repo', '/tmp/test.db');
     expect(result.failed).toBe(1);
 
     const tasks = queryTasksByStatus(db, 'FAILED');

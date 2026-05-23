@@ -10,6 +10,7 @@ import {
   propagateDagFailure,
 } from '@parallelc/taskboard';
 import { routeExitCode, cleanupWorktrees } from '@parallelc/worker';
+import { coordinateMerge } from '@parallelc/coordinator';
 import { handleGlobalBackoff } from '@parallelc/keypool';
 import { WorkerPool } from './worker-pool.js';
 
@@ -68,7 +69,7 @@ export function startScheduler(config: SchedulerConfig): void {
   const loop = setInterval(() => {
     tick++;
     const dispatch = dispatchTick(db, pool, repoRoot, maxWorkers, starvationThresholdMs);
-    const reap = reapTick(db, pool, repoRoot);
+    const reap = reapTick(db, pool, repoRoot, dbPath);
     const woken = wakeTick(db);
 
     if (dispatch.dispatched > 0 || reap.done + reap.failed + reap.sleeping > 0 || woken > 0) {
@@ -169,6 +170,7 @@ export function reapTick(
   db: Database.Database,
   pool: WorkerPool,
   repoRoot: string,
+  dbPath: string,
 ): ReapResult {
   const result: ReapResult = { done: 0, failed: 0, sleeping: 0, checkpointed: 0 };
   const exited = pool.reap();
@@ -196,6 +198,21 @@ export function reapTick(
         casUpdateStatus(db, task.id, task.version, 'RUNNING', 'DONE');
         pool.getKeyPool().markSuccess(entry.apiKey);
         cleanupWorktrees(entry.workerId, repoRoot).catch(() => {});
+        // 异步触发合并协调（不阻塞 reapTick 主流程）
+        coordinateMerge(
+          { repoRoot, dbPath },
+          task.id,
+        ).then(result => {
+          console.log(`[Scheduler] Merge ${task.id}: ${result.mergeResult.strategy}`);
+          if (result.accuracyUpdated) {
+            console.log(`[Scheduler] Accuracy recorded for ${task.id}`);
+          }
+          if (result.downstreamTriggered.length > 0) {
+            console.log(`[Scheduler] Downstream merges triggered: ${result.downstreamTriggered.join(', ')}`);
+          }
+        }).catch(err => {
+          console.error(`[Scheduler] Merge failed for ${task.id}:`, err.message);
+        });
         result.done++;
         break;
 

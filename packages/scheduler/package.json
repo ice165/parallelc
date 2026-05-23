@@ -16,6 +16,7 @@
   "dependencies": {
     "@parallelc/keypool": "workspace:*",
     "@parallelc/shared": "workspace:*",
+    "@parallelc/coordinator": "workspace:*",
     "@parallelc/taskboard": "workspace:*",
     "@parallelc/worker": "workspace:*",
     "better-sqlite3": "^11.7.0"
