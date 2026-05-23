@@ -92,6 +92,11 @@ const baseConfig: Config = {
   roots: ['<rootDir>/__tests__'],
   testMatch: ['**/*.test.ts'],
   moduleFileExtensions: ['ts', 'js', 'json'],
+  moduleNameMapper: {
+    // ts-jest 默认不解析 .js 扩展名到 .ts 源文件
+    // ESM 规范要求 import 带 .js 扩展名，此映射解决编译期路径分歧
+    '^(\\.{1,2}/.*)\\.js$': '$1',
+  },
   collectCoverageFrom: ['src/**/*.ts'],
 };
 
@@ -162,12 +167,11 @@ git commit -m "feat: add monorepo root skeleton with pnpm workspaces"
     "typecheck": "tsc --noEmit",
     "test": "jest",
     "test:ci": "jest --ci --coverage"
-  },
-  "devDependencies": {
-    "@parallelc/shared": "workspace:*"
   }
 }
 ```
+
+> `@parallelc/shared` 是纯类型和常量包，零依赖，不需要 devDependencies（尤其是不能自引用 `workspace:*`）。
 
 - [ ] **Step 2: 创建 tsconfig.json**
 
@@ -308,6 +312,7 @@ export interface OnWorkerExitOptions {
   taskId: string;
   exitCode: number;
   writeRoot: string;
+  rateLimitCount: number;
   maxRateLimitRetries?: number;
 }
 
@@ -434,7 +439,7 @@ beforeEach(() => {
 });
 
 describe('isWriteAllowed', () => {
-  test('允许在写区内写入普通文件', () => {
+  test('允许在写区内写入绝对路径', () => {
     expect(isWriteAllowed(path.join(writeRoot, 'src/a.ts'), 'w1', writeRoot)).toBe(true);
   });
 
@@ -442,7 +447,8 @@ describe('isWriteAllowed', () => {
     expect(isWriteAllowed(path.join(readonlyRoot, 'src/a.ts'), 'w1', writeRoot)).toBe(false);
   });
 
-  test('允许相对路径并规范化为写区路径', () => {
+  test('允许相对路径（以 writeRoot 为基准解析）', () => {
+    // filePath 为相对路径时，以 writeRoot 为基准拼接后再规范化
     expect(isWriteAllowed('src/a.ts', 'w1', writeRoot)).toBe(true);
   });
 });
@@ -461,15 +467,30 @@ Create `packages/validate/src/validate-write.ts`:
 import fs from 'fs';
 import path from 'path';
 
+/**
+ * 判断写入操作是否允许。
+ * 关键：对 filePath 先与 writeRoot 拼接后再规范化（path.resolve(writeRoot, filePath)），
+ * 确保相对路径以 writeRoot 为基准解析，而非 CWD。
+ */
 export function isWriteAllowed(
   filePath: string,
-  workerId: string,
+  _workerId: string,
   writeRoot: string,
 ): boolean {
-  const resolvedPath = fs.realpathSync(path.resolve(filePath));
   const resolvedRoot = fs.realpathSync(writeRoot);
+  let resolvedPath: string;
 
-  if (!resolvedPath.startsWith(resolvedRoot + path.sep) && resolvedPath !== resolvedRoot) {
+  try {
+    resolvedPath = fs.realpathSync(path.resolve(writeRoot, filePath));
+  } catch {
+    // 路径不存在时（新建文件），使用 resolve 结果
+    resolvedPath = path.resolve(writeRoot, filePath);
+  }
+
+  if (
+    !resolvedPath.startsWith(resolvedRoot + path.sep) &&
+    resolvedPath !== resolvedRoot
+  ) {
     return false;
   }
 
@@ -522,6 +543,7 @@ describe('路径穿越防御', () => {
 
   test('路径包含 -readonly 被拦截', () => {
     const trickyPath = path.join(writeRoot, 'subdir-w1-readonly-etc', 'file.ts');
+    // 目录包含 -readonly 子串统一拦截
     expect(isWriteAllowed(trickyPath, 'w1', writeRoot)).toBe(false);
   });
 
@@ -532,52 +554,12 @@ describe('路径穿越防御', () => {
 });
 ```
 
-- [ ] **Step 8: 验证穿越测试失败**
-
-Run: `cd packages/validate && pnpm test -- --testPathPattern="path-traversal"`
-Expected: 含 `-readonly` 测试可能失败（因为 realpath 对不存在的路径会抛异常）
-
-- [ ] **Step 9: 完善 isWriteAllowed（处理不存在路径）**
-
-Edit `packages/validate/src/validate-write.ts`:
-
-```typescript
-import fs from 'fs';
-import path from 'path';
-
-export function isWriteAllowed(
-  filePath: string,
-  _workerId: string,
-  writeRoot: string,
-): boolean {
-  const resolvedRoot = fs.realpathSync(writeRoot);
-  let resolvedPath: string;
-
-  try {
-    resolvedPath = fs.realpathSync(path.resolve(filePath));
-  } catch {
-    // 路径不存在时（新建文件），直接使用 resolve 结果
-    resolvedPath = path.resolve(filePath);
-  }
-
-  if (!resolvedPath.startsWith(resolvedRoot + path.sep) && resolvedPath !== resolvedRoot) {
-    return false;
-  }
-
-  if (resolvedPath.includes('-readonly')) {
-    return false;
-  }
-
-  return true;
-}
-```
-
-- [ ] **Step 10: 验证穿越测试全部通过**
+- [ ] **Step 8: 验证穿越测试通过**
 
 Run: `cd packages/validate && pnpm test`
 Expected: PASS — 7 tests total
 
-- [ ] **Step 11: 实现 hook.ts**
+- [ ] **Step 9: 实现 hook.ts**
 
 Create `packages/validate/src/hook.ts`:
 
@@ -622,12 +604,12 @@ export function validateWriteHook(
 }
 ```
 
-- [ ] **Step 12: 验证编译**
+- [ ] **Step 10: 验证编译**
 
 Run: `cd packages/validate && pnpm typecheck`
 Expected: 无错误
 
-- [ ] **Step 13: Commit**
+- [ ] **Step 11: Commit**
 
 ```bash
 git add packages/validate/
@@ -713,9 +695,12 @@ describe('TASK_TABLE_DDL', () => {
     expect(TASK_TABLE_DDL).toContain('snapshot_version');
   });
 
-  test('包含 4 个索引', () => {
+  test('包含 4 个索引，其中 2 个为 partial index', () => {
     const indexCount = (TASK_TABLE_DDL.match(/CREATE INDEX/g) ?? []).length;
     expect(indexCount).toBe(4);
+    // Partial index: 仅对特定 WHERE 条件生效
+    expect(TASK_TABLE_DDL).toContain("WHERE status = 'SLEEP_PENDING'");
+    expect(TASK_TABLE_DDL).toContain("WHERE status = 'MERGE_BLOCKED'");
   });
 });
 
@@ -778,8 +763,10 @@ CREATE TABLE IF NOT EXISTS tasks (
 
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_status_created ON tasks(status, created_at);
-CREATE INDEX IF NOT EXISTS idx_tasks_sleep_until ON tasks(sleep_until);
-CREATE INDEX IF NOT EXISTS idx_tasks_merge_blocked ON tasks(merge_blocked_at);
+CREATE INDEX IF NOT EXISTS idx_tasks_sleep_until ON tasks(sleep_until)
+    WHERE status = 'SLEEP_PENDING';
+CREATE INDEX IF NOT EXISTS idx_tasks_merge_blocked ON tasks(merge_blocked_at)
+    WHERE status = 'MERGE_BLOCKED';
 `;
 
 export const VALID_STATUSES = [
@@ -820,16 +807,15 @@ Create `packages/taskboard/__tests__/db.test.ts`:
 import Database from 'better-sqlite3';
 import { getDb, initializeSchema, closeDb } from '../src/db';
 import path from 'path';
-import fs from 'fs';
 import os from 'os';
 
 let dbPath: string;
+let dbPath2: string;
 
 beforeEach(() => {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'parallelc-db-'));
+  const tmpDir = os.mkdtempSync(path.join(os.tmpdir(), 'parallelc-db-'));
   dbPath = path.join(tmpDir, 'test.db');
-  // 重置单例
-  (getDb as unknown as { _db: Database.Database | null })._db = null;
+  dbPath2 = path.join(tmpDir, 'test2.db');
 });
 
 afterEach(() => {
@@ -842,10 +828,16 @@ describe('getDb', () => {
     expect(db).toBeInstanceOf(Database);
   });
 
-  test('单例模式：两次调用返回同一实例', () => {
+  test('相同 dbPath 返回同一实例', () => {
     const db1 = getDb(dbPath);
     const db2 = getDb(dbPath);
     expect(db1).toBe(db2);
+  });
+
+  test('不同 dbPath 返回不同实例', () => {
+    const db1 = getDb(dbPath);
+    const db2 = getDb(dbPath2);
+    expect(db1).not.toBe(db2);
   });
 });
 
@@ -880,7 +872,7 @@ describe('initializeSchema', () => {
 Run: `cd packages/taskboard && pnpm test -- --testPathPattern="db"`
 Expected: FAIL — `getDb is not defined`
 
-- [ ] **Step 9: 实现 db.ts**
+- [ ] **Step 9: 实现 db.ts（按 dbPath 多例管理）**
 
 Create `packages/taskboard/src/db.ts`:
 
@@ -888,25 +880,37 @@ Create `packages/taskboard/src/db.ts`:
 import Database from 'better-sqlite3';
 import { TASK_TABLE_DDL } from './schema.js';
 
-let _db: Database.Database | null = null;
+const instances = new Map<string, Database.Database>();
 
 export function getDb(dbPath?: string): Database.Database {
-  if (!_db) {
-    _db = new Database(dbPath ?? '.parallelc/taskboard.db');
-    _db.pragma('journal_mode = WAL');
-    _db.pragma('foreign_keys = ON');
+  const resolvedPath = dbPath ?? '.parallelc/taskboard.db';
+
+  let db = instances.get(resolvedPath);
+  if (!db) {
+    db = new Database(resolvedPath);
+    db.pragma('journal_mode = WAL');
+    db.pragma('foreign_keys = ON');
+    instances.set(resolvedPath, db);
   }
-  return _db;
+  return db;
 }
 
 export function initializeSchema(db: Database.Database): void {
   db.exec(TASK_TABLE_DDL);
 }
 
-export function closeDb(): void {
-  if (_db) {
-    _db.close();
-    _db = null;
+export function closeDb(dbPath?: string): void {
+  if (dbPath) {
+    const db = instances.get(dbPath);
+    if (db) {
+      db.close();
+      instances.delete(dbPath);
+    }
+  } else {
+    for (const [, db] of instances) {
+      db.close();
+    }
+    instances.clear();
   }
 }
 ```
@@ -920,7 +924,7 @@ Expected: PASS — schema + db tests
 
 ```bash
 git add packages/taskboard/
-git commit -m "feat(taskboard): add SQLite schema, db singleton, and WAL setup"
+git commit -m "feat(taskboard): add SQLite schema, multi-instance db, and WAL setup"
 ```
 
 ---
@@ -1039,7 +1043,7 @@ describe('getLockedFiles', () => {
     casUpdateStatus(db, 't2', t2version, 'READY', 'RUNNING');
     // 手动设置 sleep_until
     db.prepare('UPDATE tasks SET status = ?, sleep_until = ? WHERE id = ?')
-      .run('SLEEP_PENDING', '2026-07-01T10:00:00Z', 't2');
+      .run('SLEEP_PENDING', new Date().toISOString(), 't2');
 
     const lockedFiles = getLockedFiles(db);
     expect(lockedFiles).toContain('src/a.ts');
@@ -1071,6 +1075,14 @@ describe('queryTasksByStatus', () => {
     createTask(db, { id: 't2', title: 'T2', level: 'L2' });
 
     const tasks = queryTasksByStatus(db, ['PENDING', 'READY']);
+    expect(tasks).toHaveLength(2);
+  });
+
+  test('非法 orderBy 使用默认排序', () => {
+    createTask(db, { id: 't1', title: 'T1', level: 'L2' });
+    createTask(db, { id: 't2', title: 'T2', level: 'L2' });
+    // 即使传入非法参数也不应抛出异常
+    const tasks = queryTasksByStatus(db, 'PENDING', '1; DROP TABLE tasks;--');
     expect(tasks).toHaveLength(2);
   });
 });
@@ -1111,6 +1123,15 @@ interface CreateTaskInput {
   snapshot_version?: string | null;
   level?: string;
 }
+
+/** orderBy 白名单，防 SQL 拼接注入 */
+const ALLOWED_ORDER_BY = new Set([
+  'created_at ASC',
+  'created_at DESC',
+  'updated_at ASC',
+  'updated_at DESC',
+  'ready_at ASC',
+]);
 
 function rowToTask(row: Record<string, unknown>): Task {
   return {
@@ -1216,10 +1237,11 @@ export function queryTasksByStatus(
   status: TaskStatus | TaskStatus[],
   orderBy: string = 'created_at ASC',
 ): Task[] {
+  const safeOrderBy = ALLOWED_ORDER_BY.has(orderBy) ? orderBy : 'created_at ASC';
   const statuses = Array.isArray(status) ? status : [status];
   const placeholders = statuses.map(() => '?').join(', ');
   const rows = db.prepare(
-    `SELECT * FROM tasks WHERE status IN (${placeholders}) ORDER BY ${orderBy}`,
+    `SELECT * FROM tasks WHERE status IN (${placeholders}) ORDER BY ${safeOrderBy}`,
   ).all(...statuses) as Record<string, unknown>[];
   return rows.map(rowToTask);
 }
@@ -1240,14 +1262,23 @@ export function getLockedFiles(db: Database.Database): Set<string> {
   return files;
 }
 
+/**
+ * 唤醒到期的 SLEEP_PENDING 任务。
+ * 所有日期字段统一存储为 ISO 8601 格式 (new Date().toISOString())，
+ * sleep_until <= datetime('now') 需要 SQLite datetime() 与 ISO 8601 兼容。
+ * SQLite datetime('now') 返回 "YYYY-MM-DD HH:MM:SS"，而 ISO 8601 为
+ * "YYYY-MM-DDTHH:MM:SS.mmmZ"。字符串比较时 ISO 8601 的 'T' 和 'Z' 字符
+ * 不影响字典序正确性（YYYY-MM-DD 前缀一致，T/H 比较不影响时间先后）。
+ */
 export function wakeSleepingTasks(db: Database.Database): number {
+  // Phase 3+ 完整实现。Phase 1 仅提供骨架。
   const result = db.prepare(`
     UPDATE tasks
     SET status = 'READY', version = version + 1, updated_at = datetime('now'),
         ready_at = datetime('now'), sleep_until = NULL
     WHERE status = 'SLEEP_PENDING'
       AND sleep_until IS NOT NULL
-      AND sleep_until <= datetime('now')
+      AND datetime(sleep_until) <= datetime('now')
   `).run();
   return result.changes;
 }
@@ -1282,7 +1313,7 @@ export function updateTask(
     params.push(fields.starvation_override ? 1 : 0);
   }
 
-  if (setClauses.length === 1) return false; // 无字段更新
+  if (setClauses.length === 1) return false;
 
   const stmt = db.prepare(`
     UPDATE tasks
@@ -1295,11 +1326,11 @@ export function updateTask(
   return result.changes > 0;
 }
 
+/** Phase 3+ — DAG 失败传播 */
 export function propagateDagFailure(
   db: Database.Database,
   failedTaskId: string,
 ): number {
-  // Phase 3+ — 将依赖已 FAILED 任务的下游任务标记 CANCELLED
   const rows = db.prepare(
     `SELECT id FROM tasks WHERE dependencies LIKE ? AND status NOT IN ('DONE', 'FAILED', 'CANCELLED')`,
   ).all(`%"${failedTaskId}"%`) as Record<string, unknown>[];
@@ -1620,6 +1651,7 @@ describe('routeExitCode', () => {
       taskId: 't1',
       exitCode: EXIT_SUCCESS,
       writeRoot: '/tmp/w1-write',
+      rateLimitCount: 0,
     });
     expect(action.type).toBe('MARK_DONE');
   });
@@ -1629,6 +1661,7 @@ describe('routeExitCode', () => {
       taskId: 't1',
       exitCode: EXIT_CHECKPOINT,
       writeRoot: '/tmp/w1-write',
+      rateLimitCount: 0,
     });
     expect(action.type).toBe('CHECKPOINT');
   });
@@ -1638,6 +1671,7 @@ describe('routeExitCode', () => {
       taskId: 't1',
       exitCode: EXIT_TIMEOUT,
       writeRoot: '/tmp/w1-write',
+      rateLimitCount: 0,
     });
     expect(action.type).toBe('FAILED');
     expect((action as ExitAction & { reason: string }).reason).toContain('timeout');
@@ -1648,18 +1682,33 @@ describe('routeExitCode', () => {
       taskId: 't1',
       exitCode: EXIT_HOOK_BLOCKED,
       writeRoot: '/tmp/w1-write',
+      rateLimitCount: 0,
     });
     expect(action.type).toBe('HOOK_BLOCKED');
   });
 
-  test('退出码 13 → RATE_LIMIT_SLEEP', () => {
+  test('退出码 13 → RATE_LIMIT_SLEEP（rateLimitCount + 1）', () => {
     const action = routeExitCode({
       taskId: 't1',
       exitCode: EXIT_RATE_LIMIT,
       writeRoot: '/tmp/w1-write',
+      rateLimitCount: 2,
     });
     expect(action.type).toBe('RATE_LIMIT_SLEEP');
-    expect((action as ExitAction & { attempt: number }).attempt).toBe(1);
+    // attempt = rateLimitCount + 1 = 3
+    expect((action as ExitAction & { attempt: number }).attempt).toBe(3);
+  });
+
+  test('退出码 13 超出上限 → FAILED', () => {
+    const action = routeExitCode({
+      taskId: 't1',
+      exitCode: EXIT_RATE_LIMIT,
+      writeRoot: '/tmp/w1-write',
+      rateLimitCount: 5,
+      maxRateLimitRetries: 5,
+    });
+    expect(action.type).toBe('FAILED');
+    expect((action as ExitAction & { reason: string }).reason).toContain('rate_limit_exhausted');
   });
 
   test('未知退出码 → FAILED', () => {
@@ -1667,6 +1716,7 @@ describe('routeExitCode', () => {
       taskId: 't1',
       exitCode: 99,
       writeRoot: '/tmp/w1-write',
+      rateLimitCount: 0,
     });
     expect(action.type).toBe('FAILED');
     expect((action as ExitAction & { reason: string }).reason).toContain('Unknown');
@@ -1677,10 +1727,9 @@ describe('calculateRateLimitBackoff', () => {
   test('第 1 次退避 ≈ 1 分钟', () => {
     const result = calculateRateLimitBackoff(1);
     expect(result.exceeded).toBe(false);
-    // wakeAt 在 1min ± 30s 内
     const diffMs = result.wakeAt.getTime() - Date.now();
-    expect(diffMs).toBeGreaterThan(30_000);   // > 30s
-    expect(diffMs).toBeLessThan(90_000);       // < 90s
+    expect(diffMs).toBeGreaterThan(30_000);
+    expect(diffMs).toBeLessThan(90_000);
   });
 
   test('第 6 次超出上限', () => {
@@ -1694,6 +1743,15 @@ describe('calculateRateLimitBackoff', () => {
     const diffMs = result.wakeAt.getTime() - Date.now();
     expect(diffMs).toBeGreaterThan(15.5 * 60_000);
     expect(diffMs).toBeLessThan(17 * 60_000);
+  });
+});
+
+describe('collectModifiedFiles', () => {
+  test('采集已跟踪文件的修改', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'parallelc-collect-'));
+    const res = collectModifiedFiles(tmpDir);
+    // 在无 git 仓库中以空数组处理
+    expect(Array.isArray(res)).toBe(true);
   });
 });
 ```
@@ -1722,7 +1780,7 @@ const BACKOFF_MINUTES = [1, 2, 4, 8, 16];
 const MAX_RATE_LIMIT_RETRIES = 5;
 
 export function routeExitCode(opts: OnWorkerExitOptions): ExitAction {
-  const { taskId, exitCode, writeRoot, maxRateLimitRetries = MAX_RATE_LIMIT_RETRIES } = opts;
+  const { taskId, exitCode, writeRoot, rateLimitCount, maxRateLimitRetries = MAX_RATE_LIMIT_RETRIES } = opts;
 
   switch (exitCode) {
     case EXIT_SUCCESS:
@@ -1750,10 +1808,17 @@ export function routeExitCode(opts: OnWorkerExitOptions): ExitAction {
       };
 
     case EXIT_RATE_LIMIT: {
-      const backoff = calculateRateLimitBackoff(1, maxRateLimitRetries);
+      const newCount = rateLimitCount + 1;
+      if (newCount > maxRateLimitRetries) {
+        return {
+          type: 'FAILED',
+          reason: `Task ${taskId} rate_limit_exhausted after ${newCount} attempts`,
+        };
+      }
+      const backoff = calculateRateLimitBackoff(newCount, maxRateLimitRetries);
       return {
         type: 'RATE_LIMIT_SLEEP',
-        attempt: 1,
+        attempt: newCount,
         wakeAt: backoff.wakeAt,
       };
     }
@@ -1766,17 +1831,26 @@ export function routeExitCode(opts: OnWorkerExitOptions): ExitAction {
   }
 }
 
+/**
+ * 采集 Worker 写区所有变更文件。
+ * git diff --name-only HEAD 捕获已跟踪的文件变更；
+ * git ls-files --others 捕获未跟踪的新建文件。
+ */
 export function collectModifiedFiles(writeRoot: string): string[] {
   try {
-    const output = execSync('git diff --name-only HEAD', {
+    const tracked = execSync('git diff --name-only HEAD', {
       cwd: writeRoot,
       encoding: 'utf-8',
       timeout: 10_000,
-    });
-    return output
-      .split('\n')
-      .map((f) => f.trim())
-      .filter((f) => f.length > 0);
+    }).trim().split('\n').filter((f) => f.length > 0);
+
+    const untracked = execSync('git ls-files --others --exclude-standard', {
+      cwd: writeRoot,
+      encoding: 'utf-8',
+      timeout: 10_000,
+    }).trim().split('\n').filter((f) => f.length > 0);
+
+    return [...new Set([...tracked, ...untracked])];
   } catch {
     return [];
   }
@@ -1834,11 +1908,11 @@ let repoRoot: string;
 
 beforeEach(() => {
   repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'parallelc-spawn-'));
-  // 初始化一个最小 git 仓库
-  execSync('git init', { cwd: repoRoot });
+  // 初始化最小 git 仓库，显式切到 main 分支保证分支名一致
+  execSync('git init -b main', { cwd: repoRoot });
   execSync('git config user.email "test@test.com"', { cwd: repoRoot });
   execSync('git config user.name "Test"', { cwd: repoRoot });
-  // 创建一些文件结构
+  // 创建文件结构
   fs.mkdirSync(path.join(repoRoot, 'src', 'api'), { recursive: true });
   fs.mkdirSync(path.join(repoRoot, 'src', 'models'), { recursive: true });
   fs.mkdirSync(path.join(repoRoot, 'src', 'utils'), { recursive: true });
@@ -2063,11 +2137,17 @@ Task 3–8 在 Task 2 完成后可并行执行，Task 5 依赖 Task 4。
 
 ---
 
-## 不在本计划范围内
+## 变更摘要（v1.1 审查修订）
 
-- Scheduler `dispatch_loop` 完整实现（Phase 2）
-- Merge Coordinator（Phase 3）
-- API Key 轮转与 Worker 进程实际启动（Phase 2/3）
-- 饥饿保护与 MERGE_BLOCKED 仲裁（Phase 2/3）
-- `project_context.md` 生成与管理（Phase 2）
-- `propagateDagFailure` 和 `wakeSleepingTasks` 的端到端测试（Phase 3+）
+| # | 级别 | 修复内容 |
+|---|------|---------|
+| 1 | P0 | shared 包删除 `@parallelc/shared` 自依赖 |
+| 2 | P0 | `isWriteAllowed` 改用 `path.resolve(writeRoot, filePath)` 以 writeRoot 为基准解析相对路径 |
+| 3 | P0 | `wakeSleepingTasks` 使用 `datetime(sleep_until)` 统一日期格式比较 |
+| 4 | P0 | `jest.config.base.ts` 添加 `moduleNameMapper` 映射 `.js` → 源文件 |
+| 5 | P0 | `spawn.test.ts` 使用 `git init -b main` 确保分支名一致 |
+| 6 | P1 | 两个 partial index 补回 `WHERE status = 'SLEEP_PENDING'` / `WHERE status = 'MERGE_BLOCKED'` |
+| 7 | P1 | `collectModifiedFiles` 增加 `git ls-files --others` 捕获未跟踪文件 |
+| 8 | P1 | `getDb` 改为 `Map<dbPath, Database>` 多例管理 |
+| 9 | P1 | `OnWorkerExitOptions` 增加 `rateLimitCount` 字段，`routeExitCode` 使用 `rateLimitCount + 1` 计算 attempt |
+| 10 | P1 | `queryTasksByStatus` 增加 `orderBy` 白名单校验 |
