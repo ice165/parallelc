@@ -70,11 +70,12 @@ describe('WorkerPool', () => {
     expect(pool.activeCount).toBe(0);
   });
 
-  test('nextKey 循环轮转', () => {
+  test('KeyPool 循环返回所有 Key', () => {
     const pool = new WorkerPool(['sk-a', 'sk-b', 'sk-c'], 4);
+    const keyPool = pool.getKeyPool();
     const keys = new Set<string>();
     for (let i = 0; i < 6; i++) {
-      keys.add((pool as unknown as Record<string, () => string>)['nextKey']());
+      keys.add(keyPool.nextKey());
     }
     expect(keys).toContain('sk-a');
     expect(keys).toContain('sk-b');

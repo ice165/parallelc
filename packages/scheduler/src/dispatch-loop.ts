@@ -10,6 +10,7 @@ import {
   propagateDagFailure,
 } from '@parallelc/taskboard';
 import { routeExitCode, cleanupWorktrees } from '@parallelc/worker';
+import { handleGlobalBackoff } from '@parallelc/keypool';
 import { WorkerPool } from './worker-pool.js';
 
 export interface SchedulerConfig {
@@ -105,6 +106,12 @@ export function dispatchTick(
   maxWorkers: number,
   starvationThresholdMs: number = DEFAULT_STARVATION_MS,
 ): DispatchResult {
+  const backoff = handleGlobalBackoff(pool.getKeyPool());
+  if (backoff.paused) {
+    console.log(`[Scheduler] All keys paused, resuming at ${backoff.resumeAt?.toISOString()}`);
+    return { dispatched: 0, delayed: 0, starvation: 0 };
+  }
+
   // 跨轮保护：每轮从 DB 重建锁集合
   const lockedFiles = getLockedFiles(db);
   const readyTasks = queryTasksByStatus(db, 'READY');
@@ -187,6 +194,7 @@ export function reapTick(
       case 'MARK_DONE':
         updateTask(db, task.id, task.version, { modified_files: action.modifiedFiles });
         casUpdateStatus(db, task.id, task.version, 'RUNNING', 'DONE');
+        pool.getKeyPool().markSuccess(entry.apiKey);
         cleanupWorktrees(entry.workerId, repoRoot).catch(() => {});
         result.done++;
         break;
@@ -209,6 +217,7 @@ export function reapTick(
           sleep_until: action.wakeAt.toISOString(),
         });
         casUpdateStatus(db, task.id, task.version, 'RUNNING', 'SLEEP_PENDING');
+        pool.getKeyPool().markRateLimited(entry.apiKey);
         cleanupWorktrees(entry.workerId, repoRoot).catch(() => {});
         result.sleeping++;
         break;

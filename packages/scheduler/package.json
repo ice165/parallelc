@@ -14,6 +14,7 @@
     "test:ci": "jest --ci --coverage"
   },
   "dependencies": {
+    "@parallelc/keypool": "workspace:*",
     "@parallelc/shared": "workspace:*",
     "@parallelc/taskboard": "workspace:*",
     "@parallelc/worker": "workspace:*",

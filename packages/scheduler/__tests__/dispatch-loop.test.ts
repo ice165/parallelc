@@ -4,6 +4,20 @@ import Database from 'better-sqlite3';
 import { initializeSchema, createTask, casUpdateStatus, queryTasksByStatus, getLockedFiles } from '@parallelc/taskboard';
 import { EXIT_SUCCESS, EXIT_RATE_LIMIT, EXIT_TIMEOUT } from '@parallelc/shared';
 
+// Mock @parallelc/keypool
+jest.mock('@parallelc/keypool', () => ({
+  KeyPool: jest.fn().mockImplementation((keys: string[]) => ({
+    nextKey: jest.fn().mockReturnValue(keys[0]),
+    markSuccess: jest.fn(),
+    markRateLimited: jest.fn(),
+    markDead: jest.fn(),
+    allPaused: jest.fn().mockReturnValue(false),
+    earliestRecovery: jest.fn().mockReturnValue(null),
+    status: jest.fn().mockReturnValue([]),
+  })),
+  handleGlobalBackoff: jest.fn().mockReturnValue({ paused: false, resumeAt: null }),
+}));
+
 // Mock @parallelc/worker，避免 dispatchTick 内 spawn() 执行真实 git 命令
 jest.mock('@parallelc/worker', () => ({
   spawnWorker: jest.fn().mockResolvedValue({
@@ -161,6 +175,7 @@ describe('reapTick', () => {
       process: { exitCode: EXIT_SUCCESS } as unknown as import('child_process').ChildProcess,
       startedAt: new Date(),
       writeRoot: '/tmp/test',
+      apiKey: 'sk-test',
     };
     (pool as unknown as Record<string, Map<string, unknown>>)['workers'].set('worker-t1', workerEntry);
 
@@ -195,6 +210,7 @@ describe('reapTick', () => {
       process: { exitCode: null } as unknown as import('child_process').ChildProcess,
       startedAt: new Date(),
       writeRoot: '/tmp/test',
+      apiKey: 'sk-test',
     };
     (pool as unknown as Record<string, Map<string, unknown>>)['workers'].set('worker-t1', workerEntry);
 

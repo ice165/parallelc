@@ -1,5 +1,6 @@
 import type { ChildProcess } from 'child_process';
 import type { Task } from '@parallelc/shared';
+import { KeyPool } from '@parallelc/keypool';
 import { spawnWorker, spawnMcpWorker } from '@parallelc/worker';
 
 export interface WorkerEntry {
@@ -8,15 +9,15 @@ export interface WorkerEntry {
   process: ChildProcess;
   startedAt: Date;
   writeRoot: string;
+  apiKey: string;
 }
 
 export class WorkerPool {
   private workers = new Map<string, WorkerEntry>();
-  private apiKeys: string[];
-  private keyIndex = 0;
+  private keyPool: KeyPool;
 
   constructor(apiKeys: string[], private maxWorkers: number = 4) {
-    this.apiKeys = apiKeys;
+    this.keyPool = new KeyPool(apiKeys);
   }
 
   get activeCount(): number {
@@ -27,10 +28,8 @@ export class WorkerPool {
     return this.workers.size < this.maxWorkers;
   }
 
-  private nextKey(): string {
-    const key = this.apiKeys[this.keyIndex % this.apiKeys.length]!;
-    this.keyIndex++;
-    return key;
+  getKeyPool(): KeyPool {
+    return this.keyPool;
   }
 
   async spawn(task: Task, repoRoot: string): Promise<WorkerEntry> {
@@ -39,7 +38,7 @@ export class WorkerPool {
     }
 
     const workerId = `worker-${task.id}`;
-    const apiKey = this.nextKey();
+    const apiKey = this.keyPool.nextKey();
 
     // 1. 创建双 Worktree
     const result = await spawnWorker({
@@ -71,6 +70,7 @@ export class WorkerPool {
       process: childProcess,
       startedAt: new Date(),
       writeRoot: result.writeRoot,
+      apiKey,
     };
 
     this.workers.set(workerId, entry);
