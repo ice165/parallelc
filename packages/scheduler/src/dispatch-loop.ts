@@ -197,12 +197,15 @@ export function reapTick(
         updateTask(db, task.id, task.version, { modified_files: action.modifiedFiles });
         casUpdateStatus(db, task.id, task.version, 'RUNNING', 'DONE');
         pool.getKeyPool().markSuccess(entry.apiKey);
-        cleanupWorktrees(entry.workerId, repoRoot).catch(() => {});
-        // 异步触发合并协调（不阻塞 reapTick 主流程）
+        // 合并必须在清理 Worktree 之前，因为 mergeTask 需读取 write worktree
+        const workerId = entry.workerId;
+        const writeRoot = entry.writeRoot;
         coordinateMerge(
-          { repoRoot, dbPath },
+          { repoRoot, dbPath, writeRoot },
           task.id,
         ).then(result => {
+          // 合并完成后清理 Worktree
+          cleanupWorktrees(workerId, repoRoot).catch(() => {});
           console.log(`[Scheduler] Merge ${task.id}: ${result.mergeResult.strategy}`);
           if (result.accuracyUpdated) {
             console.log(`[Scheduler] Accuracy recorded for ${task.id}`);
@@ -211,6 +214,8 @@ export function reapTick(
             console.log(`[Scheduler] Downstream merges triggered: ${result.downstreamTriggered.join(', ')}`);
           }
         }).catch(err => {
+          // 合并失败也要清理 Worktree
+          cleanupWorktrees(workerId, repoRoot).catch(() => {});
           console.error(`[Scheduler] Merge failed for ${task.id}:`, err.message);
         });
         result.done++;

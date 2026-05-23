@@ -8,6 +8,7 @@ import { getDb, casUpdateStatus } from '@parallelc/taskboard';
 export interface CoordinatorConfig {
   repoRoot: string;
   dbPath: string;
+  writeRoot?: string;             // Worker 写区路径，用于 mergeTask 定位 worktree
   accuracyWarnThreshold?: number;
 }
 
@@ -23,7 +24,7 @@ export async function coordinateMerge(
   taskId: string,
 ): Promise<CoordinatorResult> {
   const db = getDb(config.dbPath);
-  const mergeResult = await mergeTask(db, taskId, config.repoRoot);
+  const mergeResult = await mergeTask(db, taskId, config.repoRoot, config.writeRoot);
   let accuracyUpdated = false;
   let shouldWarn = false;
   const downstreamTriggered: string[] = [];
@@ -40,9 +41,16 @@ export async function coordinateMerge(
     }
 
     // DAG 传播: 查找依赖此任务的直接下游
-    const downstream = db.prepare(
-      `SELECT id, dependencies FROM tasks WHERE dependencies LIKE ? AND status = 'PENDING'`,
-    ).all(`%"${taskId}"%`) as Record<string, string>[];
+    // JSON 解析过滤替代 LIKE 子串匹配，防止 task-1 误匹配 task-10
+    const pending = db.prepare(
+      `SELECT id, dependencies FROM tasks WHERE dependencies IS NOT NULL AND status = 'PENDING'`,
+    ).all() as Record<string, string>[];
+    const downstream = pending.filter(row => {
+      try {
+        const deps = JSON.parse(row['dependencies'] ?? '[]') as string[];
+        return Array.isArray(deps) && deps.includes(taskId);
+      } catch { return false; }
+    });
 
     for (const ds of downstream) {
       const deps: string[] = JSON.parse(ds['dependencies'] ?? '[]');

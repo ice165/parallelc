@@ -21,13 +21,22 @@ export async function mergeTask(
   db: Database.Database,
   taskId: string,
   repoRoot: string,
+  writeRoot?: string,
 ): Promise<MergeResult> {
-  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId) as Record<string, unknown>;
-  const workerBranch = `worker-${taskId}`;
+  // Worker 的 Worktree 路径：{repoRoot}/worktrees/{workerId}-write
+  const workerWorktree = writeRoot ?? `${repoRoot}/worktrees/worker-${taskId}-write`;
+
+  if (!fs.existsSync(workerWorktree)) {
+    return {
+      success: false, strategy: 'BLOCKED', mergedFiles: [],
+      conflicts: [], reportPath: null,
+    };
+  }
 
   try {
-    // Phase 1: AUTO — git merge（Worker 写区与主分支合并）
-    execSync(`git merge ${workerBranch} --no-edit`, {
+    // Phase 1: AUTO — 从 Worker 的 write worktree 合并到主仓库
+    // 使用 worktree 路径而非分支名：Worker 的修改已提交到该 worktree 的 HEAD
+    execSync(`git merge --no-ff --no-edit ${workerWorktree}`, {
       cwd: repoRoot, stdio: 'pipe', timeout: 30_000,
     });
     const modFiles = task['modified_files'] ? JSON.parse(task['modified_files'] as string) : [];

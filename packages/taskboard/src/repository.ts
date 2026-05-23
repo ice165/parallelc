@@ -207,9 +207,17 @@ export function propagateDagFailure(
   db: Database.Database,
   failedTaskId: string,
 ): number {
-  const rows = db.prepare(
-    `SELECT id FROM tasks WHERE dependencies LIKE '%' || ? || '%' AND status NOT IN ('DONE', 'FAILED', 'CANCELLED')`,
-  ).all(failedTaskId) as Record<string, unknown>[];
+  // JSON 解析过滤替代 LIKE 子串匹配，防止误匹配（如 task-1 误匹配 task-10）
+  const all = db.prepare(
+    `SELECT id, dependencies FROM tasks WHERE dependencies IS NOT NULL AND status NOT IN ('DONE', 'FAILED', 'CANCELLED')`,
+  ).all() as Record<string, unknown>[];
+  const dependsOn = all.filter(row => {
+    try {
+      const deps = JSON.parse(row['dependencies'] as string) as string[];
+      return Array.isArray(deps) && deps.includes(failedTaskId);
+    } catch { return false; }
+  });
+  const rows = dependsOn.map(r => ({ id: r['id'] }));
 
   let count = 0;
   for (const row of rows) {
