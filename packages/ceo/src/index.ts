@@ -7,3 +7,7 @@ export { ceoReview } from './ceo-agent.js';
 export type { CeoAgentOptions } from './ceo-agent.js';
 export { ceoBatchReview } from './batch-reviewer.js';
 export type { BatchReviewResult } from './batch-reviewer.js';
+export { intakeRequirement, confirmWithClarification } from './requirement-intake.js';
+export type { IntakeResult } from './requirement-intake.js';
+export { generateSpec, buildStructuredSpec } from './spec-generator.js';
+export type { StructuredSpec } from './spec-generator.js';

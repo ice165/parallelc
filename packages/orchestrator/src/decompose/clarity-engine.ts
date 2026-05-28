@@ -39,9 +39,9 @@ export function evaluateClarity(userRequest: string): ClarityResult {
   const score = Math.max(0, verbScore + scopeScore + constraintScore - ambiguityPenalty);
 
   let zone: ClarityResult['zone'];
-  if (score < 50) {
+  if (score < 70) {
     zone = 'BRAINSTORM';
-    warnings.push('需求清晰度不足 (<50)，建议细化需求后再执行');
+    warnings.push('需求清晰度不足 (<70)，建议 CEO 需求确认后再执行');
   } else if (score <= 90) {
     zone = 'DUAL_ENGINE';
   } else {

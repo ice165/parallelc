@@ -2,6 +2,7 @@
 
 import { getDb, initializeSchema, queryTasksByStatus, casUpdateStatus } from '@parallelc/taskboard';
 import { ceoBatchReview } from './batch-reviewer.js';
+import { intakeRequirement } from './requirement-intake.js';
 
 const command = process.argv[2];
 
@@ -111,10 +112,40 @@ if (command === 'review') {
   console.log(`Task ${taskId}: CEO_ESCALATED → ${toStatus}`);
   db.close();
 
+} else if (command === 'intake') {
+  const args = process.argv.slice(3);
+  const userRequest = args.find(a => !a.startsWith('--'));
+  const interactive = args.includes('--interactive');
+
+  if (!userRequest) {
+    console.error('Usage: parallelc-ceo intake <requirement> [--interactive]');
+    process.exit(1);
+  }
+
+  const result = intakeRequirement(userRequest);
+  console.log(`[CEO] Clarity score: ${result.clarity.score}/100 (zone: ${result.clarity.zone})`);
+
+  if (result.phase === 'CLARIFY') {
+    console.log('\n需求不够清晰，请补充以下信息：');
+    for (const q of result.clarifyingQuestions) {
+      console.log(`  - ${q}`);
+    }
+    if (interactive) {
+      console.log('\n请逐项补充（输入空行结束）：');
+      // In interactive mode, we'd read stdin. For now, suggest re-running with clarifications.
+      console.log('  使用: parallelc-ceo intake "原需求 + 补充说明"');
+    }
+    process.exit(0);
+  }
+
+  console.log('\n' + result.spec);
+  console.log(`\n[CEO] 方案就绪，可交给 Orchestrator 拆解执行。`);
+
 } else {
   console.log('ParallelC CEO v0.1.0');
-  console.log('  review  --repo <path> --api-key <key> [--dag <id>]');
-  console.log('  status  [--db <path>]');
-  console.log('  confirm --task <id> [--verdict pass|revision]');
+  console.log('  intake   <requirement> [--interactive]   需求确认与方案生成');
+  console.log('  review   --repo <path> --api-key <key>   批量审查 Worker 产出');
+  console.log('  status   [--db <path>]                   查看审查状态');
+  console.log('  confirm  --task <id> [--verdict pass]    确认 ESCALATED 任务');
   process.exit(0);
 }

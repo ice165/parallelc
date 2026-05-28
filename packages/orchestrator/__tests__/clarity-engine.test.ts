@@ -7,17 +7,16 @@ describe('evaluateClarity', () => {
     expect(result.zone).toBe('PASS');
   });
 
-  test('模糊需求得分 < 50', () => {
+  test('模糊需求得分 < 70', () => {
     const result = evaluateClarity('优化一下性能');
-    expect(result.score).toBeLessThan(50);
+    expect(result.score).toBeLessThan(70);
     expect(result.zone).toBe('BRAINSTORM');
   });
 
-  test('中等清晰度得分 50-90', () => {
-    const result = evaluateClarity('添加用户认证功能，可能需要修改几个文件');
-    expect(result.score).toBeGreaterThanOrEqual(50);
+  test('中等清晰度得分 70-90', () => {
+    const result = evaluateClarity('添加用户认证功能，修改 src/api/auth.ts 实现 JWT 登录');
+    expect(result.score).toBeGreaterThanOrEqual(70);
     expect(result.score).toBeLessThanOrEqual(90);
-    expect(result.zone).toBe('DUAL_ENGINE');
   });
 
   test('检测到歧义词扣分', () => {

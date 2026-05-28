@@ -7,6 +7,8 @@ export { estimateTokens } from './pre-process/token-estimator.js';
 export type { TokenEstimate } from './pre-process/token-estimator.js';
 
 // Decompose
+export { evaluateClarity } from './decompose/clarity-engine.js';
+export type { ClarityResult } from './decompose/clarity-engine.js';
 export { buildOrchestratorPrompt } from './decompose/prompt-builder.js';
 export type { DecompositionInput } from './decompose/prompt-builder.js';
 export { decomposeViaClaude } from './decompose/mcp-decomposer.js';
