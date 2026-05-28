@@ -1,5 +1,36 @@
 # Changelog
 
+## v2.0.0 — Path B Enhancement: 12 模块全面增强 (2026-05-28)
+
+### 新增 — P0 正确性与安全
+- **FilePredictor**: 文件预测三层兜底 (LLM → 静态分析 import graph → git diff → 全量 src)
+- **ClarityEngine**: 中文需求清晰度评分 0-100，三分区策略 (BRAINSTORM/DUAL_ENGINE/PASS)
+- **GhostDetector**: 幽灵 Worker 恢复，PID 状态检查 (Linux/Windows)，上游依赖感知
+
+### 新增 — P1 健壮性与调度智能
+- **RebaseHandler**: git rebase 替代 merge，2 次重试 + 5s/10s 延迟
+- **ASTConflictDetector**: 语义冲突检测 (重复定义 + 冲突标记)
+- **StallDetector**: 依赖图死锁打断，FAILED/CANCELLED 上游 → 下游自动取消
+- **F1BetaTracker**: F0.5-β 滑动窗口，冷启动 20 轮保护 + ×1.5 扩展，连续低分自动降级
+
+### 新增 — P2 运营与可观测性
+- **CostTracker**: 三层预算控制 (单次 8192 tokens / 单任务 $3 / 单会话 $20)，Anthropic 2026 定价
+- **AuditLogger**: JSONL append-only + SHA256 校验，16 种事件类型，>100MB 自动归档
+- **ReproGenerator**: 失败自动生成 .sh 复现脚本 + context.json
+
+### 新增 — P3 安全加固与可观测性
+- **HMAC 验证**: 每次 spawn 随机 32B 密钥，SHA-256 HMAC 防任务数据篡改
+- **EXIT_TAMPER (14)**: HMAC 验证失败退出码
+- **Mock 模式**: `PARALLELC_MOCK_CLAUDE_RESPONSE` 加载预录制响应
+- **OpenTelemetry**: 控制台 span 导出器，`PARALLELC_OTEL_ENABLED=1` 开启
+
+### 修复
+- FilePredictor: symlink 路径穿越防御 (realpathSync 验证)
+- ReproGenerator: shell 命令注入防御 (sanitize + 单引号)
+- CostTracker: 预算死锁修复 (各出口调用 resetTask)
+- merge-strategy: 命令注入防御 (execFileSync 替代 execSync)
+- AuditLogger: crc32 → checksum 字段名修正
+
 ## v0.4.0 — Phase 3A: 合并协调 + Key Pool + 预测闭环 (2026-05-23)
 
 ### 新增
