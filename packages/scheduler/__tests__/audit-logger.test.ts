@@ -40,7 +40,7 @@ describe('AuditLogger', () => {
     logger.log('TASK_FAILED', { taskId: 't1', reason: 'timeout' });
     const content = fs.readFileSync(path.join(logDir, 'audit.log'), 'utf-8');
     const parsed = JSON.parse(content.trim());
-    expect(parsed.crc32).toBeDefined();
-    expect(parsed.crc32).toHaveLength(8);
+    expect(parsed.checksum).toBeDefined();
+    expect(parsed.checksum).toHaveLength(8);
   });
 });

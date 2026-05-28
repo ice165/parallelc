@@ -11,12 +11,14 @@ export interface RebaseResult {
 
 const MAX_RETRIES = 2;
 
+const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+
 export const rebaseHandler = {
   getRetryLimit(): number {
     return MAX_RETRIES;
   },
 
-  attemptRebase(taskId: string, repoRoot: string, retryCount: number = 0): RebaseResult {
+  async attemptRebase(taskId: string, repoRoot: string, retryCount: number = 0): Promise<RebaseResult> {
     try {
       // 1. Fetch latest main
       try {
@@ -33,6 +35,7 @@ export const rebaseHandler = {
       } catch {
         if (retryCount < MAX_RETRIES) {
           this.abortRebase(repoRoot);
+          await sleep(5000 * (retryCount + 1));
           return this.attemptRebase(taskId, repoRoot, retryCount + 1);
         }
         this.abortRebase(repoRoot);
@@ -50,6 +53,7 @@ export const rebaseHandler = {
       if (conflictFiles.length > 0) {
         if (retryCount < MAX_RETRIES) {
           this.abortRebase(repoRoot);
+          await sleep(5000 * (retryCount + 1));
           return this.attemptRebase(taskId, repoRoot, retryCount + 1);
         }
         this.abortRebase(repoRoot);

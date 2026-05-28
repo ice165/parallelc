@@ -7,6 +7,8 @@ export class F1BetaTracker {
   private scores: number[] = [];
   private readonly beta = 0.5;
   private consecutiveLow = 0;
+  private readonly minHistoryForDegrade = 20;
+  private readonly coldStartMultiplier = 1.5;
 
   constructor(private windowSize: number = 10) {}
 
@@ -30,8 +32,16 @@ export class F1BetaTracker {
     return sum / this.scores.length;
   }
 
+  isColdStart(): boolean {
+    return this.scores.length < this.minHistoryForDegrade;
+  }
+
+  getColdStartMultiplier(): number {
+    return this.isColdStart() ? this.coldStartMultiplier : 1.0;
+  }
+
   shouldDegrade(): boolean {
-    if (this.scores.length < 2) return false;
+    if (this.isColdStart()) return false;
     if (this.consecutiveLow >= 3) return true;
     if (this.scores.length >= this.windowSize && this.getAverageScore() < 0.7) return true;
     return false;

@@ -27,7 +27,7 @@ export async function coordinateMerge(
   const db = getDb(config.dbPath);
 
   // Attempt rebase before merge
-  const rebaseResult = rebaseHandler.attemptRebase(taskId, config.repoRoot);
+  const rebaseResult = await rebaseHandler.attemptRebase(taskId, config.repoRoot);
   if (rebaseResult.status === 'REBASE_BLOCKED') {
     console.log(`[Coordinator] Rebase blocked for ${taskId}: ${rebaseResult.conflictFiles.join(', ')}`);
     // Continue with existing merge flow as fallback

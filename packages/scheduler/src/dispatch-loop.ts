@@ -143,9 +143,13 @@ export function dispatchTick(
 
   // F1-beta degradation check
   let effectiveMax = maxWorkers;
-  if (f1Tracker && f1Tracker.shouldDegrade()) {
-    console.log(`[Scheduler] F1-beta degraded (avg=${f1Tracker.getAverageScore().toFixed(2)}), limiting concurrency`);
-    effectiveMax = 1;
+  if (f1Tracker) {
+    if (f1Tracker.shouldDegrade()) {
+      console.log(`[Scheduler] F1-beta degraded (avg=${f1Tracker.getAverageScore().toFixed(2)}), limiting concurrency`);
+      effectiveMax = 1;
+    } else if (f1Tracker.isColdStart()) {
+      effectiveMax = Math.ceil(maxWorkers * f1Tracker.getColdStartMultiplier());
+    }
   }
 
   // Cost budget check

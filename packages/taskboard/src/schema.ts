@@ -17,7 +17,8 @@ CREATE TABLE IF NOT EXISTS tasks (
     dependencies TEXT,
     ready_at TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    f1_beta REAL
 );
 
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);

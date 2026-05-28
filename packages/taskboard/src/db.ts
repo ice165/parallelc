@@ -18,6 +18,12 @@ export function getDb(dbPath?: string): Database.Database {
 
 export function initializeSchema(db: Database.Database): void {
   db.exec(TASK_TABLE_DDL);
+  // Migration: add f1_beta column for existing databases
+  try {
+    db.exec('ALTER TABLE tasks ADD COLUMN f1_beta REAL');
+  } catch {
+    // Column already exists, safe to ignore
+  }
 }
 
 export function closeDb(dbPath?: string): void {

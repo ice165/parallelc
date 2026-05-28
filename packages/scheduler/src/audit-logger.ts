@@ -30,12 +30,12 @@ export class AuditLogger {
 
     const ts = Date.now();
     const entry = { type, ...data };
-    const crc32 = createHash('sha256')
+    const checksum = createHash('sha256')
       .update(`${this.seq}:${ts}:${JSON.stringify(entry)}`)
       .digest('hex')
       .slice(0, 8);
 
-    const record = JSON.stringify({ seq: this.seq, ts, entry, crc32 });
+    const record = JSON.stringify({ seq: this.seq, ts, entry, checksum });
     fs.appendFileSync(this.logPath, record + '\n');
 
     // Auto-archive: rename when >100MB
