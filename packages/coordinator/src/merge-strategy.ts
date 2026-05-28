@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import { execSync } from 'child_process';
+import { execSync, execFileSync } from 'child_process';
 import fs from 'fs';
 
 export interface ConflictDetail {
@@ -82,9 +82,9 @@ export async function mergeTask(
         resolveConflictFile(`${repoRoot}/${c.file}`);
       }
       try {
-        execSync('git add -A && git commit -m "STRUCTURED merge: ' + taskId + '"', {
-          cwd: repoRoot, stdio: 'pipe', timeout: 15_000,
-        });
+        const safeTaskId = taskId.replace(/[^a-zA-Z0-9\-_.]/g, '');
+        execFileSync('git', ['add', '-A'], { cwd: repoRoot, stdio: 'pipe', timeout: 10_000 });
+        execFileSync('git', ['commit', '-m', `STRUCTURED merge: ${safeTaskId}`], { cwd: repoRoot, stdio: 'pipe', timeout: 10_000 });
         return {
           success: true, strategy: 'STRUCTURED',
           mergedFiles: conflictFiles, conflicts, reportPath: null,

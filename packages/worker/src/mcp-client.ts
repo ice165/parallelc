@@ -7,6 +7,8 @@ export interface McpClientOptions {
   readonlyRoot: string;
   maxRounds?: number;
   timeoutMs?: number;
+  /** 额外的环境变量，会合并到子进程 env 中（覆盖同名变量） */
+  extraEnv?: Record<string, string>;
 }
 
 export interface McpTaskContext {
@@ -33,6 +35,7 @@ export function spawnMcpWorker(
     readonlyRoot,
     maxRounds = DEFAULT_MAX_ROUNDS,
     timeoutMs = DEFAULT_TIMEOUT_MS,
+    extraEnv = {},
   } = opts;
 
   const env = {
@@ -41,6 +44,7 @@ export function spawnMcpWorker(
     CLAUDE_MODEL: model,
     WORKER_READONLY_ROOT: readonlyRoot,
     WORKER_WRITE_ROOT: cwd,
+    ...extraEnv,
   };
 
   const child = spawn(

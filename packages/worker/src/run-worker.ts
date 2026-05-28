@@ -1,8 +1,25 @@
 import { verifySnapshotVersion } from './startup.js';
 import { spawnMcpWorker } from './mcp-client.js';
-import { EXIT_HOOK_BLOCKED } from '@parallelc/shared';
+import { verifyHmac } from './hmac-verify.js';
+import { EXIT_HOOK_BLOCKED, EXIT_TAMPER } from '@parallelc/shared';
 
 export function runWorker(): void {
+  // 0. HMAC 完整性校验（若有 HMAC 环境变量则验证，无则跳过以保持向后兼容）
+  const hmacSecretHex = process.env['PARALLELC_HMAC_SECRET'];
+  const hmacExpectedHex = process.env['PARALLELC_HMAC_EXPECTED'];
+  const taskDataRaw = process.env['PARALLELC_TASK_DATA'];
+
+  if (hmacSecretHex && hmacExpectedHex && taskDataRaw) {
+    const secret = Buffer.from(hmacSecretHex, 'hex');
+    const expected = Buffer.from(hmacExpectedHex, 'hex');
+    if (!verifyHmac(secret, taskDataRaw, expected)) {
+      console.error('[runWorker] HMAC verification failed — possible tampering or misconfiguration');
+      process.exit(EXIT_TAMPER);
+    }
+  } else {
+    console.warn('[runWorker] HMAC env vars not set, skipping integrity verification (backward-compat mode)');
+  }
+
   const workerId = process.env['WORKER_ID'];
   const writeRoot = process.env['WORKER_WRITE_ROOT'];
   const readonlyRoot = process.env['WORKER_READONLY_ROOT'];

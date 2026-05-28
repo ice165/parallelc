@@ -285,12 +285,14 @@ export function reapTick(
           cleanupWorktrees(workerId, repoRoot).catch(() => {});
           console.error(`[Scheduler] Merge failed for ${task.id}:`, err.message);
         });
+        costTracker?.resetTask();
         result.done++;
         break;
       }
 
       case 'CHECKPOINT':
         casUpdateStatus(db, task.id, task.version, 'RUNNING', 'CHECKPOINT_PENDING');
+        costTracker?.resetTask();
         result.checkpointed++;
         break;
 
@@ -311,6 +313,7 @@ export function reapTick(
             exitCode: exitCode ?? 1,
           });
         } catch { /* repro generation is best-effort */ }
+        costTracker?.resetTask();
         result.failed++;
         break;
 
@@ -322,12 +325,14 @@ export function reapTick(
         casUpdateStatus(db, task.id, task.version, 'RUNNING', 'SLEEP_PENDING');
         pool.getKeyPool().markRateLimited(entry.apiKey);
         cleanupWorktrees(entry.workerId, repoRoot).catch(() => {});
+        costTracker?.resetTask();
         result.sleeping++;
         break;
 
       case 'HOOK_BLOCKED':
         casUpdateStatus(db, task.id, task.version, 'RUNNING', 'FAILED');
         cleanupWorktrees(entry.workerId, repoRoot).catch(() => {});
+        costTracker?.resetTask();
         result.failed++;
         break;
     }

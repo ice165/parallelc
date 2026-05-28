@@ -5,6 +5,7 @@ import {
   EXIT_TIMEOUT,
   EXIT_HOOK_BLOCKED,
   EXIT_RATE_LIMIT,
+  EXIT_TAMPER,
 } from '@parallelc/shared';
 import type { ExitAction, OnWorkerExitOptions, RateLimitBackoffResult } from '@parallelc/shared';
 
@@ -54,6 +55,12 @@ export function routeExitCode(opts: OnWorkerExitOptions): ExitAction {
         wakeAt: backoff.wakeAt,
       };
     }
+
+    case EXIT_TAMPER:
+      return {
+        type: 'FAILED',
+        reason: `HMAC verification failed for task ${taskId} — possible tampering or misconfiguration`,
+      };
 
     default:
       return {

@@ -1,7 +1,8 @@
 import type { ChildProcess } from 'child_process';
+import crypto from 'crypto';
 import type { Task } from '@parallelc/shared';
 import { KeyPool } from '@parallelc/keypool';
-import { spawnWorker, spawnMcpWorker } from '@parallelc/worker';
+import { spawnWorker, spawnMcpWorker, generateHmac } from '@parallelc/worker';
 
 export interface WorkerEntry {
   workerId: string;
@@ -52,7 +53,16 @@ export class WorkerPool {
       apiKey,
     });
 
-    // 2. 启动 MCP 子进程
+    // 2. 生成 HMAC 密钥（每次 spawn 随机），用于 Worker 端的完整性校验
+    const hmacSecret = crypto.randomBytes(32);
+    const taskData = JSON.stringify({
+      taskId: task.id,
+      snapshotVersion: task.snapshot_version ?? 'unknown',
+      dependencies: task.dependencies,
+    });
+    const expectedHmac = generateHmac(hmacSecret, taskData);
+
+    // 3. 启动 MCP 子进程
     //    环境变量通过 spawnMcpWorker 内部 env 传递，
     //    validateWriteHook（Phase 1）从 process.env 读取 WORKER_ID / WORKER_WRITE_ROOT
     const childProcess = spawnMcpWorker(
@@ -60,6 +70,11 @@ export class WorkerPool {
         apiKey,
         cwd: result.writeRoot,
         readonlyRoot: result.readonlyRoot,
+        extraEnv: {
+          PARALLELC_HMAC_SECRET: hmacSecret.toString('hex'),
+          PARALLELC_HMAC_EXPECTED: expectedHmac.toString('hex'),
+          PARALLELC_TASK_DATA: taskData,
+        },
       },
       {
         taskId: task.id,
