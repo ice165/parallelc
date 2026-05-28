@@ -1,5 +1,29 @@
 # Changelog
 
+## v2.1.0 — CEO 层 + 安全加固 (2026-05-28)
+
+### 新增 — CEO 质量门禁层
+- **@parallelc/ceo**: 意图对齐审查包，插在 Worker 和 Coordinator 之间
+- **IntentMatcher**: 4 维评分引擎（功能覆盖 35 + 缺失检测 25 + 多余修改 20 + 副作用 20）
+- **BatchReviewer**: 批处理审查编排器，遍历 REVIEW_PENDING 任务并调用 CEO 审查
+- **IterationTracker**: 审查轮次管理、分层跳过条件、分级模型选择（L2→Sonnet, L3→Opus）
+- **CeoAgent**: LLM 审查 + 规则引擎回退 + Mock 模式
+- **CLI**: `parallelc-ceo review / status / confirm` 命令
+
+### 新增 — 状态机扩展
+- 3 种新状态：REVIEW_PENDING、REVISION_NEEDED、CEO_ESCALATED
+- 审查-修改迭代循环（最多 3 轮）
+- 自动跳过策略：L1 / F1-β>0.85 / 清晰度>95 / 单文件纯增量
+
+### 安全修复
+- **C-1**: 全局 `execFileSync` 替代 `execSync`，消除 shell 命令注入
+- **C-2**: `isWriteAllowed` 父目录链 `realpathSync`，修复 TOCTOU 竞态
+- **C-3**: `ceoReviewTick` 并发保护标志位
+- **C-4**: LLM 响应 `parseFeedback()` 验证
+- **H-1**: 提取 `collectModifiedFiles`/`getConflictFiles` 到 `shared/git-utils.ts`
+- **H-3**: 移除 keypool 无用依赖
+- **M-2**: 导出 `queryTaskById` 消除重复实现
+
 ## v2.0.0 — Path B Enhancement: 12 模块全面增强 (2026-05-28)
 
 ### 新增 — P0 正确性与安全
