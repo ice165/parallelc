@@ -29,13 +29,28 @@ if (command === 'review') {
       const task = queryTasksByStatus(db, 'REVIEW_PENDING').find(t => t.id === r.taskId);
       if (!task) continue;
 
+      // CAS retry: re-query if version changed (e.g., scheduler also processing)
+      let updated = false;
+      const toStatus = r.feedback.verdict === 'PASS' ? 'DONE' as const
+        : r.feedback.verdict === 'REVISION' ? 'REVISION_NEEDED' as const
+        : 'CEO_ESCALATED' as const;
+
+      for (let retry = 0; retry < 2 && !updated; retry++) {
+        const current = retry === 0 ? task
+          : queryTasksByStatus(db, 'REVIEW_PENDING').find(t => t.id === r.taskId);
+        if (!current) break;
+        updated = casUpdateStatus(db, r.taskId, current.version, 'REVIEW_PENDING', toStatus);
+      }
+      if (!updated) {
+        console.log(`  ${r.taskId}: skipped (version conflict)`);
+        continue;
+      }
+
       switch (r.feedback.verdict) {
         case 'PASS':
-          casUpdateStatus(db, r.taskId, task.version, 'REVIEW_PENDING', 'DONE');
           console.log(`  ${r.taskId}: PASS (score=${r.feedback.score})`);
           break;
         case 'REVISION':
-          casUpdateStatus(db, r.taskId, task.version, 'REVIEW_PENDING', 'REVISION_NEEDED');
           console.log(`  ${r.taskId}: REVISION (score=${r.feedback.score}) — ${r.feedback.summary}`);
           break;
         case 'ESCALATE':

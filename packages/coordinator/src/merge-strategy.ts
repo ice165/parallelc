@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import { execFileSync } from 'child_process';
 import fs from 'fs';
+import { getConflictFiles } from '@parallelc/shared';
 
 export interface ConflictDetail {
   file: string;
@@ -100,15 +101,6 @@ export async function mergeTask(
       success: false, strategy: 'BLOCKED', mergedFiles: [], conflicts, reportPath: null,
     };
   }
-}
-
-function getConflictFiles(repoRoot: string): string[] {
-  try {
-    const out = execFileSync('git', ['diff', '--name-only', '--diff-filter=U'], {
-      cwd: repoRoot, encoding: 'utf-8', stdio: 'pipe',
-    });
-    return out.trim().split('\n').filter(Boolean);
-  } catch { return []; }
 }
 
 function detectConflictLines(repoRoot: string, file: string): string {

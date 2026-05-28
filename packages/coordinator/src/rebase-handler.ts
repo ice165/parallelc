@@ -1,4 +1,5 @@
 import { execSync } from 'child_process';
+import { collectModifiedFiles, getConflictFiles } from '@parallelc/shared';
 import { detectAstConflicts } from './ast-conflict-detector.js';
 
 export interface RebaseResult {
@@ -42,14 +43,14 @@ export const rebaseHandler = {
         return {
           status: 'REBASE_BLOCKED',
           modifiedFiles: [],
-          conflictFiles: this.getConflictFiles(repoRoot),
+          conflictFiles: getConflictFiles(repoRoot),
           astConflicts: [],
           retriesUsed: retryCount,
         };
       }
 
       // 3. Check for leftover conflict markers
-      const conflictFiles = this.getConflictFiles(repoRoot);
+      const conflictFiles = getConflictFiles(repoRoot);
       if (conflictFiles.length > 0) {
         if (retryCount < MAX_RETRIES) {
           this.abortRebase(repoRoot);
@@ -69,7 +70,7 @@ export const rebaseHandler = {
 
       return {
         status: 'REBASE_SUCCESS',
-        modifiedFiles: this.collectModifiedFiles(repoRoot),
+        modifiedFiles: collectModifiedFiles(repoRoot),
         conflictFiles: [],
         astConflicts: [],
         retriesUsed: retryCount,
@@ -94,28 +95,4 @@ export const rebaseHandler = {
     } catch { /* already clean */ }
   },
 
-  getConflictFiles(repoRoot: string): string[] {
-    try {
-      const result = execSync('git diff --name-only --diff-filter=U', {
-        cwd: repoRoot, encoding: 'utf-8', timeout: 5000,
-      }).trim();
-      return result ? result.split('\n') : [];
-    } catch {
-      return [];
-    }
-  },
-
-  collectModifiedFiles(repoRoot: string): string[] {
-    try {
-      const tracked = execSync('git diff --name-only HEAD', {
-        cwd: repoRoot, encoding: 'utf-8', timeout: 10_000,
-      }).trim().split('\n').filter(f => f.length > 0);
-      const untracked = execSync('git ls-files --others --exclude-standard', {
-        cwd: repoRoot, encoding: 'utf-8', timeout: 10_000,
-      }).trim().split('\n').filter(f => f.length > 0);
-      return [...new Set([...tracked, ...untracked])];
-    } catch {
-      return [];
-    }
-  },
 };

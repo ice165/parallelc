@@ -1,4 +1,3 @@
-import { execSync } from 'child_process';
 import {
   EXIT_SUCCESS,
   EXIT_CHECKPOINT,
@@ -6,6 +5,7 @@ import {
   EXIT_HOOK_BLOCKED,
   EXIT_RATE_LIMIT,
   EXIT_TAMPER,
+  collectModifiedFiles,
 } from '@parallelc/shared';
 import type { ExitAction, OnWorkerExitOptions, RateLimitBackoffResult } from '@parallelc/shared';
 
@@ -67,38 +67,6 @@ export function routeExitCode(opts: OnWorkerExitOptions): ExitAction {
         type: 'FAILED',
         reason: `Unknown exit code ${exitCode} for task ${taskId}`,
       };
-  }
-}
-
-/**
- * 采集 Worker 写区所有变更文件。
- * git diff --name-only HEAD 捕获已跟踪文件的变更；
- * git ls-files --others --exclude-standard 捕获未跟踪的新建文件。
- */
-export function collectModifiedFiles(writeRoot: string): string[] {
-  try {
-    const tracked = execSync('git diff --name-only HEAD', {
-      cwd: writeRoot,
-      encoding: 'utf-8',
-      timeout: 10_000,
-    })
-      .trim()
-      .split('\n')
-      .filter((f) => f.length > 0);
-
-    const untracked = execSync('git ls-files --others --exclude-standard', {
-      cwd: writeRoot,
-      encoding: 'utf-8',
-      timeout: 10_000,
-    })
-      .trim()
-      .split('\n')
-      .filter((f) => f.length > 0);
-
-    return [...new Set([...tracked, ...untracked])];
-  } catch (err) {
-    console.warn(`[lifecycle] collectModifiedFiles failed in ${writeRoot}:`, err instanceof Error ? err.message : err);
-    return [];
   }
 }
 
