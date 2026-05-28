@@ -1,12 +1,12 @@
 # ParallelC
 
-> 对 Claude Code 说一句话，自动拆成多个任务并行执行，自动审查质量，结果自动合并——就像有多个 Claude 同时为你工作。
+> 对 Claude Code 说一句话，自动确认需求、拆成多个任务并行执行、自动审查质量，结果自动合并——就像有多个 Claude 同时为你工作。
 
 ## 它是什么
 
-ParallelC 是 Claude Code 的并行执行引擎。你只需要描述想要完成的功能，它自动将任务拆解、在隔离环境中并行执行、CEO 层审查质量、最后把代码安全合并回主分支。
+ParallelC 是 Claude Code 的并行执行引擎。CEO 层先确认需求并生成结构化方案，Orchestrator 拆解为并行任务，Worker 在隔离环境中执行，CEO 再次审查产出质量，最后 Coordinator 安全合并回主分支。
 
-**一个指令，多条流水线，自动协同。**
+**一个指令，五层流水线，自动协同。**
 
 ## 核心架构
 
@@ -15,7 +15,14 @@ ParallelC 是 Claude Code 的并行执行引擎。你只需要描述想要完成
       │
       ▼
 ┌──────────────┐
-│ Orchestrator │  清晰度评估 → 仓库扫描 → DAG 拆解 → 文件预测三层兜底 → 写入 TaskBoard
+│     CEO      │  需求确认 + 方案生成（前置）
+│  (需求门禁)   │  清晰度 <70 → 生成澄清问题 → 用户补充 → 再确认
+│              │  清晰度 ≥70 → 生成结构化方案（验收标准+风险+级别）
+└──────┬───────┘
+       │ 确认后的方案
+       ▼
+┌──────────────┐
+│ Orchestrator │  仓库扫描 → DAG 拆解 → 文件预测三层兜底 → 写入 TaskBoard
 │  (LLM 大脑)   │  L1 简单任务直接执行 / L2 进入流水线 / L3 人工确认
 └──────┬───────┘
        │
@@ -33,8 +40,9 @@ ParallelC 是 Claude Code 的并行执行引擎。你只需要描述想要完成
        │
        ▼
 ┌──────────────┐
-│     CEO      │  意图对齐审查（4维评分：覆盖/缺失/多余/副作用）
-│  (质量门禁)   │  PASS→合并 / REVISION→Worker修改(≤3轮) / ESCALATE→人工
+│     CEO      │  意图对齐审查（后置）
+│  (质量门禁)   │  4维评分：覆盖/缺失/多余/副作用
+│              │  PASS→合并 / REVISION→Worker修改(≤3轮) / ESCALATE→人工
 └──────┬───────┘
        │ CEO 批准
        ▼
@@ -44,11 +52,15 @@ ParallelC 是 Claude Code 的并行执行引擎。你只需要描述想要完成
 └──────────────┘
 ```
 
-## v2.1 核心特性
+## v2.2 核心特性
+
+### CEO 需求确认 (v2.2 新增)
+- **前置需求确认**：执行前先生成结构化方案，用户确认后再交给 Orchestrator 拆解
+- **清晰度阈值 70 分**：<70 分自动生成澄清问题，用户补充后重新评估
+- **方案自动生成**：提取需求中的动词、文件路径、约束 → 生成验收标准 + 风险等级 + 建议任务级别
 
 ### 正确性与安全 (P0)
 - **文件预测三层兜底**：LLM 预测 → 静态分析（import graph）→ git diff 兜底，确保安全边界不依赖 LLM 单点
-- **清晰度评估引擎**：中文需求评分 0-100，<50 分建议细化，50-90 双引擎评估，>90 直接通过
 - **幽灵 Worker 恢复**：启动时检测僵尸进程，区分 Alive/Zombie/Dead，上游依赖检查后智能恢复
 - **路径穿越防御**：`realpathSync` 父目录链验证 + symlink 检测，防御 TOCTOU 竞态
 
@@ -57,12 +69,12 @@ ParallelC 是 Claude Code 的并行执行引擎。你只需要描述想要完成
 - **依赖图死锁打断**：检测 FAILED/CANCELLED 上游 → 自动取消下游，运行时持续监控
 - **F1-β 滑动窗口**：β=0.5 偏重精确率，窗口=10，冷启动 20 轮保护 + ×1.5 扩展，连续低分自动降级串行
 
-### CEO 质量门禁 (v2.1 新增)
+### CEO 质量门禁
 - **意图对齐审查**：检查 Worker 产出是否与用户原始需求对齐（不审查代码语法）
 - **4 维评分引擎**：功能覆盖(35) + 缺失检测(25) + 多余修改(20) + 副作用风险(20)
 - **审查-修改迭代**：PASS→合并 / REVISION→Worker 增量修改(最多3轮) / ESCALATE→人工
 - **分层信任模型**：L1 跳过 / L2 Sonnet 审查 / L3 Opus 审查
-- **跳过策略**：F1-β>0.85 或清晰度>95 或单文件纯增量 → 自动跳过
+- **跳过策略**：F1-β>0.85 或清晰度≥90 或单文件纯增量 → 自动跳过
 
 ### 运营与可观测性 (P2)
 - **成本三层预算**：单次调用 (8192 tokens) / 单任务 ($3) / 单会话 ($20)，Anthropic 2026 实时定价
@@ -74,7 +86,7 @@ ParallelC 是 Claude Code 的并行执行引擎。你只需要描述想要完成
 - **命令注入防御**：全局 `execFileSync` 替代 `execSync`，参数数组避免 shell 解析
 - **Mock 模式**：`PARALLELC_MOCK_CLAUDE_RESPONSE` 加载预录制响应，跳过真实 API 调用
 
-### v1.5 保留特性
+### 保留特性
 - 预测性文件锁 + 两层锁保护 + 饥饿保护 (300s)
 - 429 防共振：指数退避 [1,2,4,8,16] 分钟 + ±30s 随机抖动
 - 双 Worktree 隔离 + L1/L2/L3 智能分级 + DAG 失败传播
@@ -95,7 +107,18 @@ pnpm install
 pnpm build
 ```
 
-### 使用（四步走）
+### 使用（五步走）
+
+**第 0 步 — 需求确认（推荐）**
+
+先用 CEO 确认需求，生成结构化方案：
+
+```bash
+npx parallelc-ceo intake "给商城加一个优惠券系统"
+```
+
+- 清晰度 <70 → 输出澄清问题，补充后重新运行
+- 清晰度 ≥70 → 输出方案（含验收标准、风险等级、建议级别），确认后进入下一步
 
 **第 1 步 — 启动 Scheduler**
 
@@ -106,7 +129,7 @@ npx parallelc-scheduler start \
   --max-workers 4
 ```
 
-**第 2 步 — 拆解任务**
+**第 2 步 — 拆解并执行**
 
 ```bash
 npx parallelc-orchestrate decompose "给商城加一个优惠券系统" \
@@ -121,7 +144,7 @@ Worker 完成后自动进入 CEO 审查队列。也可手动触发：
 ```bash
 npx parallelc-ceo review --repo /path/to/your-project --api-key sk-ant-xxx
 npx parallelc-ceo status        # 查看审查状态
-npx parallelc-ceo confirm --task task-xxx  # 确认 ESCALATED 任务
+npx parallelc-ceo confirm --task task-xxx --verdict pass  # 确认 ESCALATED 任务
 ```
 
 **第 4 步 — 确认 L3 任务（如有）**
@@ -142,8 +165,9 @@ npx parallelc-ceo status                # CEO 审查状态
 
 | 维度 | Claude Code Team 模式 | ParallelC |
 |------|----------------------|-----------|
+| **需求确认** | 无（直接开始） | CEO 前置确认 + 方案生成 |
 | **分工方式** | 多个 Agent 讨论同一个任务 | Orchestrator 分析文件依赖，自动拆解为独立子任务 |
-| **质量门禁** | 无（依赖 Agent 自律） | CEO 层 4 维评分 + 3 轮迭代 + ESCALATE 人工 |
+| **质量门禁** | 无（依赖 Agent 自律） | CEO 前置确认 + 后置审查（4 维评分 + 3 轮迭代） |
 | **执行环境** | 共享工作区，无文件隔离 | 每个 Worker 独立 Git Worktree + HMAC 防篡改 |
 | **冲突处理** | 依赖 Agent 自身判断 | 预测性文件锁 + 三层兜底，提前阻止同文件并发写入 |
 | **合并方式** | Agent 自行 git commit | git rebase + AST 冲突检测 + 三级合并 |
@@ -154,7 +178,7 @@ npx parallelc-ceo status                # CEO 审查状态
 
 ```
 packages/
-├── shared/        共享类型、常量、错误类、HMAC 工具、OTel 辅助、Git 工具
+├── shared/        共享类型、常量、HMAC 工具、OTel 辅助、Git 工具
 ├── validate/      写保护、路径穿越防御（realpath + TOCTOU）
 ├── taskboard/     SQLite 任务状态机、CAS 乐观锁、幽灵Worker检测
 ├── keypool/       API Key 池轮转、健康检查、指数退避
@@ -163,7 +187,7 @@ packages/
 │                 成本追踪、复现脚本、规则校验、准确率追踪
 ├── coordinator/   git rebase + AST 冲突检测、三级合并策略、仲裁决策树
 ├── scheduler/     调度主循环、F1-β 追踪、审计日志、CEO 集成
-└── ceo/           意图对齐审查、4维评分引擎、审查-修改迭代控制
+└── ceo/           需求确认+方案生成、意图对齐审查、4维评分、迭代控制
 ```
 
 ## 退出码协议
