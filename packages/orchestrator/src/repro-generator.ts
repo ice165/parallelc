@@ -10,20 +10,28 @@ export interface ReproContext {
   exitCode: number;
 }
 
+function sanitizeShellToken(value: string): string {
+  // Only allow alphanumeric, hyphens, underscores, and dots
+  return value.replace(/[^a-zA-Z0-9\-_.]/g, '');
+}
+
 export function generateRepro(ctx: ReproContext): { scriptPath: string; contextPath: string } {
   fs.mkdirSync(ctx.outputDir, { recursive: true });
 
-  const scriptPath = path.join(ctx.outputDir, `${ctx.taskId}.sh`);
-  const contextPath = path.join(ctx.outputDir, `${ctx.taskId}-context.json`);
+  const safeTaskId = sanitizeShellToken(ctx.taskId);
+  const safeGitHead = sanitizeShellToken(ctx.gitHead);
+
+  const scriptPath = path.join(ctx.outputDir, `${safeTaskId}.sh`);
+  const contextPath = path.join(ctx.outputDir, `${safeTaskId}-context.json`);
 
   const script = `#!/bin/bash
-# Auto-generated repro script for ${ctx.taskId}
+# Auto-generated repro script for ${safeTaskId}
 # Generated at ${new Date().toISOString()}
 export PARALLELC_REPRODUCE=1
-export PARALLELC_TASK_ID=${ctx.taskId}
-git checkout ${ctx.gitHead}
-echo "Reproducing task ${ctx.taskId}..."
-parallelc-scheduler start --repo . --api-keys "$PARALLELC_API_KEYS" --single-task ${ctx.taskId}
+export PARALLELC_TASK_ID='${safeTaskId}'
+git checkout '${safeGitHead}'
+echo "Reproducing task ${safeTaskId}..."
+parallelc-scheduler start --repo . --api-keys "$PARALLELC_API_KEYS" --single-task '${safeTaskId}'
 `;
   fs.writeFileSync(scriptPath, script, { mode: 0o755 });
 

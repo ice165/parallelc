@@ -42,14 +42,38 @@ export class FilePredictor {
     if (files.length === 0) return { valid: true };
     if (files.length > 50) return { valid: false, reason: `Too many files: ${files.length} > 50` };
 
+    // Resolve repo root to canonical path for symlink defense
+    let resolvedRoot: string;
+    try {
+      resolvedRoot = fs.realpathSync(repoRoot);
+    } catch {
+      return { valid: false, reason: `Cannot resolve repo root: ${repoRoot}` };
+    }
+
     for (const f of files) {
+      // Reject path traversal attempts
       if (f.includes('..')) return { valid: false, reason: `Path traversal detected: ${f}` };
+      if (path.isAbsolute(f)) return { valid: false, reason: `Absolute path not allowed: ${f}` };
+
       const fullPath = path.join(repoRoot, f);
       if (!fs.existsSync(fullPath)) {
         const parentDir = path.dirname(fullPath);
         if (!fs.existsSync(parentDir)) {
           return { valid: false, reason: `Parent directory does not exist: ${f}` };
         }
+        // New file in existing directory — skip symlink check
+        continue;
+      }
+
+      // Defend against symlink traversal: resolve and verify containment
+      let resolvedFile: string;
+      try {
+        resolvedFile = fs.realpathSync(fullPath);
+      } catch {
+        continue; // unreadable symlink target, skip
+      }
+      if (!resolvedFile.startsWith(resolvedRoot + path.sep) && resolvedFile !== resolvedRoot) {
+        return { valid: false, reason: `Symlink escapes repo root: ${f}` };
       }
     }
 
