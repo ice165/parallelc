@@ -9,7 +9,7 @@ import {
   updateTask,
   wakeSleepingTasks,
   propagateDagFailure,
-  detectGhosts,
+  GhostDetector,
 } from '@parallelc/taskboard';
 import { routeExitCode, cleanupWorktrees } from '@parallelc/worker';
 import { coordinateMerge } from '@parallelc/coordinator';
@@ -87,8 +87,9 @@ export function startScheduler(config: SchedulerConfig): void {
   // Initialize audit logger
   auditLogger = new AuditLogger('.parallelc/audit.log');
 
-  // Ghost recovery on startup
-  const ghosts = detectGhosts(db, new Set(pool.workerIds()));
+  // Ghost recovery on startup (includes upstream dependency check)
+  const ghostDetector = new GhostDetector(db);
+  const ghosts = ghostDetector.detect(new Set(pool.workerIds()));
   for (const ghost of ghosts) {
     console.log(`[Scheduler] Ghost worker detected: ${ghost.taskId} (${ghost.reason}), resetting to READY`);
     casUpdateStatus(db, ghost.taskId, 0, 'RUNNING', 'READY');
@@ -170,6 +171,8 @@ export function dispatchTick(
         casUpdateStatus(db, s.taskId, task.version, 'READY', 'CANCELLED');
         propagateDagFailure(db, s.taskId);
       }
+    } else {
+      console.log(`[Scheduler] Stall warning: ${s.taskId} — ${s.reason}`);
     }
   }
 
