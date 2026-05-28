@@ -24,6 +24,12 @@ export function initializeSchema(db: Database.Database): void {
   } catch {
     // Column already exists, safe to ignore
   }
+  // Migration: add CEO columns for existing databases
+  const ceoColumns = ['ceo_score REAL', 'ceo_feedback TEXT',
+    'ceo_iteration INTEGER DEFAULT 0', 'parent_task_id TEXT'];
+  for (const col of ceoColumns) {
+    try { db.exec(`ALTER TABLE tasks ADD COLUMN ${col}`); } catch { /* exists */ }
+  }
 }
 
 export function closeDb(dbPath?: string): void {

@@ -10,9 +10,11 @@ import {
   wakeSleepingTasks,
   propagateDagFailure,
   GhostDetector,
+  createTask,
 } from '@parallelc/taskboard';
 import { routeExitCode, cleanupWorktrees } from '@parallelc/worker';
 import { coordinateMerge } from '@parallelc/coordinator';
+import { ceoBatchReview } from '@parallelc/ceo';
 import { handleGlobalBackoff } from '@parallelc/keypool';
 import { detectStalled, CostTracker, generateRepro } from '@parallelc/orchestrator';
 import { WorkerPool } from './worker-pool.js';
@@ -99,6 +101,9 @@ export function startScheduler(config: SchedulerConfig): void {
     tick++;
     const dispatch = dispatchTick(db, pool, repoRoot, maxWorkers, starvationThresholdMs);
     const reap = reapTick(db, pool, repoRoot, dbPath);
+    const ceoReview = ceoReviewTick(db, pool, repoRoot, dbPath, apiKeys[0] ?? '').catch(err => {
+      console.error('[CEO] Review tick error:', err.message);
+    });
     const woken = wakeTick(db);
 
     if (dispatch.dispatched > 0 || reap.done + reap.failed + reap.sleeping > 0 || woken > 0) {
@@ -261,7 +266,7 @@ export function reapTick(
     switch (action.type) {
       case 'MARK_DONE': {
         updateTask(db, task.id, task.version, { modified_files: action.modifiedFiles });
-        casUpdateStatus(db, task.id, task.version + 1, 'RUNNING', 'DONE');
+        casUpdateStatus(db, task.id, task.version + 1, 'RUNNING', 'REVIEW_PENDING');
         pool.getKeyPool().markSuccess(entry.apiKey);
         auditLogger?.log('TASK_COMPLETED', { taskId: task.id, modifiedFiles: action.modifiedFiles });
         // Feed prediction accuracy to F1-beta sliding window tracker
@@ -346,6 +351,69 @@ export function reapTick(
   }
 
   return result;
+}
+
+async function ceoReviewTick(
+  db: Database.Database,
+  pool: WorkerPool,
+  repoRoot: string,
+  dbPath: string,
+  apiKey: string,
+): Promise<void> {
+  const reviewTasks = queryTasksByStatus(db, 'REVIEW_PENDING');
+  if (reviewTasks.length === 0) return;
+
+  const f1Avg = f1Tracker?.getAverageScore() ?? 1.0;
+  const ceoBudget = (costTracker?.getSummary().sessionCost ?? 0) < 5.0 ? 5.0 : 0;
+
+  const result = await ceoBatchReview(
+    db, repoRoot, apiKey, 80, f1Avg, ceoBudget, '',
+  );
+
+  for (const r of result.results) {
+    const task = queryTaskById(db, r.taskId);
+    if (!task) continue;
+
+    switch (r.feedback.verdict) {
+      case 'PASS': {
+        casUpdateStatus(db, r.taskId, task.version, 'REVIEW_PENDING', 'DONE');
+        auditLogger?.log('MERGE_CONFIRMED', { taskId: r.taskId, ceoScore: r.feedback.score });
+        const workerId = `worker-${r.taskId}`;
+        const writeRoot = repoRoot;
+        coordinateMerge(
+          { repoRoot, dbPath, writeRoot },
+          r.taskId,
+        ).catch(err => console.error(`[CEO] Merge failed for ${r.taskId}:`, err.message));
+        break;
+      }
+      case 'REVISION': {
+        casUpdateStatus(db, r.taskId, task.version, 'REVIEW_PENDING', 'REVISION_NEEDED');
+        const childId = `${r.taskId}-r${(task.ceo_iteration ?? 0) + 1}`;
+        createTask(db, {
+          id: childId,
+          title: `${task.title} (Revision ${(task.ceo_iteration ?? 0) + 1})`,
+          expected_touch_files: task.modified_files ?? task.expected_touch_files ?? [],
+          level: task.level,
+          snapshot_version: task.snapshot_version ?? 'unknown',
+          dependencies: null,
+        });
+        db.prepare(`UPDATE tasks SET ceo_feedback = ?, ceo_iteration = ?, parent_task_id = ? WHERE id = ?`)
+          .run(JSON.stringify(r.feedback), (task.ceo_iteration ?? 0) + 1, r.taskId, childId);
+        break;
+      }
+      case 'ESCALATE': {
+        casUpdateStatus(db, r.taskId, task.version, 'REVIEW_PENDING', 'CEO_ESCALATED');
+        db.prepare(`UPDATE tasks SET ceo_feedback = ?, ceo_score = ? WHERE id = ?`)
+          .run(JSON.stringify(r.feedback), r.feedback.score, r.taskId);
+        auditLogger?.log('MERGE_BLOCKED', { taskId: r.taskId, ceoScore: r.feedback.score });
+        break;
+      }
+    }
+  }
+
+  if (result.reviewed > 0) {
+    console.log(`[CEO] Review: ${result.passed} passed, ${result.revision} revision, ${result.escalated} escalated, ${result.skipped} skipped | cost=$${result.totalCost.toFixed(4)}`);
+  }
 }
 
 export function wakeTick(db: Database.Database): number {

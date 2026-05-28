@@ -18,7 +18,11 @@ CREATE TABLE IF NOT EXISTS tasks (
     ready_at TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-    f1_beta REAL
+    f1_beta REAL,
+    ceo_score REAL,
+    ceo_feedback TEXT,
+    ceo_iteration INTEGER DEFAULT 0,
+    parent_task_id TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
@@ -39,6 +43,9 @@ export const VALID_STATUSES = [
   'FAILED',
   'CANCELLED',
   'MERGE_BLOCKED',
+  'REVIEW_PENDING',
+  'REVISION_NEEDED',
+  'CEO_ESCALATED',
 ] as const;
 
 export const ALLOWED_TRANSITIONS: Record<string, string[]> = {
@@ -47,8 +54,11 @@ export const ALLOWED_TRANSITIONS: Record<string, string[]> = {
   RUNNING:              ['DONE', 'SLEEP_PENDING', 'CHECKPOINT_PENDING', 'FAILED'],
   SLEEP_PENDING:        ['READY', 'FAILED'],
   CHECKPOINT_PENDING:   ['READY', 'FAILED'],
-  DONE:                 [],
+  DONE:                 ['REVIEW_PENDING'],
   FAILED:               [],
   CANCELLED:            [],
   MERGE_BLOCKED:        ['DONE'],
+  REVIEW_PENDING:       ['DONE', 'REVISION_NEEDED', 'CEO_ESCALATED'],
+  REVISION_NEEDED:      ['READY', 'CEO_ESCALATED'],
+  CEO_ESCALATED:        ['DONE'],
 };

@@ -45,6 +45,11 @@ function rowToTask(row: Record<string, unknown>): Task {
     ready_at: (row['ready_at'] as string) ?? null,
     created_at: row['created_at'] as string,
     updated_at: row['updated_at'] as string,
+    f1_beta: row['f1_beta'] != null ? Number(row['f1_beta']) : null,
+    ceo_score: row['ceo_score'] != null ? Number(row['ceo_score']) : null,
+    ceo_feedback: row['ceo_feedback'] ? String(row['ceo_feedback']) : null,
+    ceo_iteration: row['ceo_iteration'] ? Number(row['ceo_iteration']) : 0,
+    parent_task_id: row['parent_task_id'] ? String(row['parent_task_id']) : null,
   };
 }
 

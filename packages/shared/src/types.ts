@@ -7,7 +7,10 @@ export type TaskStatus =
   | 'DONE'
   | 'FAILED'
   | 'CANCELLED'
-  | 'MERGE_BLOCKED';
+  | 'MERGE_BLOCKED'
+  | 'REVIEW_PENDING'
+  | 'REVISION_NEEDED'
+  | 'CEO_ESCALATED';
 
 export type TaskLevel = 'L1' | 'L2' | 'L3';
 
@@ -30,6 +33,11 @@ export interface Task {
   ready_at: string | null;
   created_at: string;
   updated_at: string;
+  f1_beta: number | null;
+  ceo_score: number | null;
+  ceo_feedback: string | null;
+  ceo_iteration: number;
+  parent_task_id: string | null;
 }
 
 export interface WorkerContext {
@@ -92,4 +100,31 @@ export interface OnWorkerExitOptions {
 export interface RateLimitBackoffResult {
   wakeAt: Date;
   exceeded: boolean;
+}
+
+export interface CeoFeedback {
+  verdict: 'PASS' | 'REVISION' | 'ESCALATE';
+  score: number;
+  summary: string;
+  gaps: string[];
+  excess: string[];
+  sideEffects: string[];
+  suggestions: string[];
+}
+
+export interface CeoReviewInput {
+  userRequest: string;
+  taskTitle: string;
+  taskReasoning: string;
+  diff: string;
+  modifiedFiles: string[];
+  iteration: number;
+}
+
+export interface CeoReviewResult {
+  taskId: string;
+  feedback: CeoFeedback;
+  model: 'sonnet' | 'opus';
+  tokensUsed: number;
+  cost: number;
 }
