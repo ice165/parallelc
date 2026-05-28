@@ -9,3 +9,5 @@ export {
   updateTask,
   propagateDagFailure,
 } from './repository.js';
+export { detectGhosts } from './ghost-detector.js';
+export type { GhostTask } from './ghost-detector.js';

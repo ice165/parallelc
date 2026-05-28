@@ -25,6 +25,19 @@ export async function decomposeViaClaude(
   input: DecompositionInput,
   opts: DecomposerOptions,
 ): Promise<DecomposerResult> {
+  // Mock mode: load pre-recorded response from file
+  const mockResponsePath = process.env['PARALLELC_MOCK_CLAUDE_RESPONSE'];
+  if (mockResponsePath) {
+    const { readFileSync } = await import('fs');
+    const mockData = JSON.parse(readFileSync(mockResponsePath, 'utf-8'));
+    return {
+      raw: JSON.stringify(mockData),
+      parsed: mockData.tasks ?? null,
+      tokensUsed: 0,
+      cached: false,
+    };
+  }
+
   const cacheKey = opts.cacheKey === null
     ? null
     : opts.cacheKey ?? createHash('sha1')

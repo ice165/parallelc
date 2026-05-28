@@ -28,6 +28,10 @@ export class WorkerPool {
     return this.workers.size < this.maxWorkers;
   }
 
+  workerIds(): string[] {
+    return [...this.workers.keys()];
+  }
+
   getKeyPool(): KeyPool {
     return this.keyPool;
   }

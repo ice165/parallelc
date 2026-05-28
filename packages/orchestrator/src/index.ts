@@ -15,6 +15,8 @@ export { parseTaskDAG } from './decompose/response-parser.js';
 export type { TaskDraft } from './decompose/response-parser.js';
 
 // Post-validate
+export { detectStalled } from './post-validate/stall-detector.js';
+export type { StalledTask } from './post-validate/stall-detector.js';
 export { enforceHardRules } from './post-validate/rule-engine.js';
 export type { RuleResult } from './post-validate/rule-engine.js';
 export { validatePaths } from './post-validate/path-validator.js';
@@ -25,6 +27,14 @@ export { executeL1Directly } from './post-validate/l1-executor.js';
 export type { L1ExecutionResult } from './post-validate/l1-executor.js';
 export { confirmL3Tasks } from './post-validate/l3-confirm.js';
 export type { L3Confirmation } from './post-validate/l3-confirm.js';
+
+// Cost budget
+export { CostTracker } from './cost-tracker.js';
+export type { CostConfig, TokenUsage } from './cost-tracker.js';
+
+// Repro generator
+export { generateRepro } from './repro-generator.js';
+export type { ReproContext } from './repro-generator.js';
 
 // Core
 export { buildDAG } from './dag-builder.js';

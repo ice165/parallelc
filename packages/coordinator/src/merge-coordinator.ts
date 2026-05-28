@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import { mergeTask, type MergeResult } from './merge-strategy.js';
 import { generateBlockedReport } from './report-generator.js';
 import { bridgeAccuracy } from './accuracy-bridge.js';
+import { rebaseHandler } from './rebase-handler.js';
 import type { Task } from '@parallelc/shared';
 import { getDb, casUpdateStatus } from '@parallelc/taskboard';
 
@@ -24,6 +25,14 @@ export async function coordinateMerge(
   taskId: string,
 ): Promise<CoordinatorResult> {
   const db = getDb(config.dbPath);
+
+  // Attempt rebase before merge
+  const rebaseResult = rebaseHandler.attemptRebase(taskId, config.repoRoot);
+  if (rebaseResult.status === 'REBASE_BLOCKED') {
+    console.log(`[Coordinator] Rebase blocked for ${taskId}: ${rebaseResult.conflictFiles.join(', ')}`);
+    // Continue with existing merge flow as fallback
+  }
+
   const mergeResult = await mergeTask(db, taskId, config.repoRoot, config.writeRoot);
   let accuracyUpdated = false;
   let shouldWarn = false;

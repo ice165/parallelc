@@ -23,6 +23,9 @@ export function spawnMcpWorker(
   opts: McpClientOptions,
   context: McpTaskContext,
 ): ChildProcess {
+  // Mock mode: set PARALLELC_MOCK_CLAUDE_RESPONSE env var to a JSON file path
+  // containing pre-recorded Claude responses to skip real API calls.
+  // Used primarily in orchestrator's mcp-decomposer.ts.
   const {
     apiKey,
     model = 'sonnet',

@@ -7,3 +7,7 @@ export type { MergeReport } from './report-generator.js';
 export { coordinateMerge } from './merge-coordinator.js';
 export type { CoordinatorConfig, CoordinatorResult } from './merge-coordinator.js';
 export { bridgeAccuracy } from './accuracy-bridge.js';
+export { rebaseHandler } from './rebase-handler.js';
+export type { RebaseResult } from './rebase-handler.js';
+export { detectAstConflicts } from './ast-conflict-detector.js';
+export type { AstConflict } from './ast-conflict-detector.js';

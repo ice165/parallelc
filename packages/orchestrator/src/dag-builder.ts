@@ -4,12 +4,14 @@ import { scanRepoContext } from './pre-process/repo-scanner.js';
 import { extractModuleMap } from './pre-process/module-map.js';
 import { type DecompositionInput } from './decompose/prompt-builder.js';
 import { decomposeViaClaude } from './decompose/mcp-decomposer.js';
+import { evaluateClarity } from './decompose/clarity-engine.js';
 import { enforceHardRules } from './post-validate/rule-engine.js';
 import { validatePaths } from './post-validate/path-validator.js';
 import { validateDAG } from './post-validate/dag-validator.js';
 import { executeL1Directly } from './post-validate/l1-executor.js';
 import { recordPrediction } from './metrics-collector.js';
 import type { L3Confirmation } from './post-validate/l3-confirm.js';
+import { FilePredictor } from './predictor/file-predictor.js';
 
 export interface BuildDagOptions {
   repoRoot: string;
@@ -55,6 +57,15 @@ export async function buildDAG(
     repoContext,
     moduleMap,
   };
+
+  // Clarity check (non-blocking)
+  const clarity = evaluateClarity(fullInput.userRequest);
+  if (clarity.zone === 'BRAINSTORM') {
+    console.log(`[Orchestrator] Clarity score=${clarity.score} — 建议细化需求`);
+    for (const w of clarity.warnings) {
+      console.log(`  [WARN] ${w}`);
+    }
+  }
 
   // 2. LLM Decompose (with retry)
   let decomposerResult: Awaited<ReturnType<typeof decomposeViaClaude>> | null = null;
@@ -121,7 +132,13 @@ export async function buildDAG(
   }
 
   // 4. Process each task draft
+  const predictor = new FilePredictor();
   for (const draft of decomposerResult.parsed) {
+    const prediction = predictor.predict(draft.expected_touch_files, draft.title, opts.repoRoot);
+    if (prediction.source !== 'LLM') {
+      console.log(`[Orchestrator] File prediction fallback: ${prediction.source} (confidence=${prediction.confidence})`);
+      draft.expected_touch_files = prediction.files;
+    }
     const rule = enforceHardRules(draft, repoContext, opts.repoRoot);
 
     switch (rule.action) {

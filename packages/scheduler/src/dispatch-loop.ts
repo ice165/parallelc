@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import { EXIT_TIMEOUT } from '@parallelc/shared';
 import type { Task } from '@parallelc/shared';
+import { execSync } from 'child_process';
 import {
   getLockedFiles,
   queryTasksByStatus,
@@ -8,11 +9,15 @@ import {
   updateTask,
   wakeSleepingTasks,
   propagateDagFailure,
+  detectGhosts,
 } from '@parallelc/taskboard';
 import { routeExitCode, cleanupWorktrees } from '@parallelc/worker';
 import { coordinateMerge } from '@parallelc/coordinator';
 import { handleGlobalBackoff } from '@parallelc/keypool';
+import { detectStalled, CostTracker, generateRepro } from '@parallelc/orchestrator';
 import { WorkerPool } from './worker-pool.js';
+import { F1BetaTracker } from './f1-beta-tracker.js';
+import { AuditLogger } from './audit-logger.js';
 
 export interface SchedulerConfig {
   dbPath: string;
@@ -49,6 +54,10 @@ const DEFAULT_STARVATION_MS = 300_000;
 const DEFAULT_TICK_MS = 2_000;
 const DEFAULT_MAX_RATE_LIMIT_RETRIES = 5;
 
+let f1Tracker: F1BetaTracker | null = null;
+let costTracker: CostTracker | null = null;
+let auditLogger: AuditLogger | null = null;
+
 export function startScheduler(config: SchedulerConfig): void {
   const {
     dbPath,
@@ -65,6 +74,25 @@ export function startScheduler(config: SchedulerConfig): void {
   let tick = 0;
 
   console.log(`[Scheduler] 启动 | DB: ${dbPath} | Max Workers: ${maxWorkers} | Repo: ${repoRoot}`);
+
+  // Initialize F1-beta sliding window tracker
+  f1Tracker = new F1BetaTracker(10);
+
+  // Initialize cost tracker
+  costTracker = new CostTracker({
+    maxCostPerTask: 3.0,
+    maxCostPerSession: 20.0,
+  });
+
+  // Initialize audit logger
+  auditLogger = new AuditLogger('.parallelc/audit.log');
+
+  // Ghost recovery on startup
+  const ghosts = detectGhosts(db, new Set(pool.workerIds()));
+  for (const ghost of ghosts) {
+    console.log(`[Scheduler] Ghost worker detected: ${ghost.taskId} (${ghost.reason}), resetting to READY`);
+    casUpdateStatus(db, ghost.taskId, 0, 'RUNNING', 'READY');
+  }
 
   const loop = setInterval(() => {
     tick++;
@@ -113,6 +141,34 @@ export function dispatchTick(
     return { dispatched: 0, delayed: 0, starvation: 0 };
   }
 
+  // F1-beta degradation check
+  let effectiveMax = maxWorkers;
+  if (f1Tracker && f1Tracker.shouldDegrade()) {
+    console.log(`[Scheduler] F1-beta degraded (avg=${f1Tracker.getAverageScore().toFixed(2)}), limiting concurrency`);
+    effectiveMax = 1;
+  }
+
+  // Cost budget check
+  if (costTracker && !costTracker.canDispatch()) {
+    const summary = costTracker.getSummary();
+    console.log(`[Scheduler] Cost budget exceeded (session=$${summary.sessionCost.toFixed(2)}), pausing dispatch`);
+    auditLogger?.log('COST_BUDGET_EXCEEDED', { sessionCost: summary.sessionCost });
+    return { dispatched: 0, delayed: 0, starvation: 0 };
+  }
+
+  // Stall detection
+  const stalled = detectStalled(db);
+  for (const s of stalled) {
+    if (s.action === 'CANCEL') {
+      console.log(`[Scheduler] Stalled task detected: ${s.taskId} — ${s.reason}, cancelling`);
+      const task = queryTaskById(db, s.taskId);
+      if (task) {
+        casUpdateStatus(db, s.taskId, task.version, 'READY', 'CANCELLED');
+        propagateDagFailure(db, s.taskId);
+      }
+    }
+  }
+
   // 跨轮保护：每轮从 DB 重建锁集合
   const lockedFiles = getLockedFiles(db);
   const readyTasks = queryTasksByStatus(db, 'READY');
@@ -123,7 +179,7 @@ export function dispatchTick(
 
   for (const task of readyTasks) {
     if (!pool.hasCapacity()) break;
-    if (dispatched >= maxWorkers) break;
+    if (dispatched >= effectiveMax) break;
 
     const taskExpected = new Set(task.expected_touch_files ?? []);
     const conflicting = [...taskExpected].filter((f) => lockedFiles.has(f));
@@ -155,7 +211,10 @@ export function dispatchTick(
       pool.spawn(task, repoRoot).catch((err: Error) => {
         console.error(`[Scheduler] Failed to spawn worker for ${task.id}:`, err.message);
         casUpdateStatus(db, task.id, task.version + 1, 'RUNNING', 'FAILED');
+        auditLogger?.log('TASK_FAILED', { taskId: task.id, reason: err.message });
       });
+
+      auditLogger?.log('TASK_STARTED', { taskId: task.id, title: task.title });
 
       // 本轮保护：立即更新内存锁集合
       for (const f of taskExpected) lockedFiles.add(f);
@@ -197,6 +256,14 @@ export function reapTick(
         updateTask(db, task.id, task.version, { modified_files: action.modifiedFiles });
         casUpdateStatus(db, task.id, task.version + 1, 'RUNNING', 'DONE');
         pool.getKeyPool().markSuccess(entry.apiKey);
+        auditLogger?.log('TASK_COMPLETED', { taskId: task.id, modifiedFiles: action.modifiedFiles });
+        // Feed prediction accuracy to F1-beta sliding window tracker
+        if (f1Tracker && task.expected_touch_files && action.modifiedFiles) {
+          f1Tracker.record({
+            expected: task.expected_touch_files ?? [],
+            actual: action.modifiedFiles,
+          });
+        }
         // 合并必须在清理 Worktree 之前，因为 mergeTask 需读取 write worktree
         const workerId = entry.workerId;
         const writeRoot = entry.writeRoot;
@@ -231,6 +298,19 @@ export function reapTick(
         casUpdateStatus(db, task.id, task.version, 'RUNNING', 'FAILED');
         propagateDagFailure(db, task.id);
         cleanupWorktrees(entry.workerId, repoRoot).catch(() => {});
+        auditLogger?.log('TASK_FAILED', { taskId: task.id, reason: action.reason });
+        // Generate reproduction script (best-effort)
+        try {
+          const gitHead = execSync('git rev-parse HEAD', { cwd: repoRoot, encoding: 'utf-8' }).trim();
+          generateRepro({
+            taskId: task.id,
+            outputDir: '.parallelc/reproduce',
+            gitHead,
+            snapshotVersion: task.snapshot_version ?? 'unknown',
+            stdout: action.reason ?? '',
+            exitCode: exitCode ?? 1,
+          });
+        } catch { /* repro generation is best-effort */ }
         result.failed++;
         break;
 

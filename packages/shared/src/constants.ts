@@ -3,6 +3,7 @@ export const EXIT_CHECKPOINT = 10;
 export const EXIT_TIMEOUT = 11;
 export const EXIT_HOOK_BLOCKED = 12;
 export const EXIT_RATE_LIMIT = 13;
+export const EXIT_TAMPER = 14;
 
 export const EXIT_CODE_LABELS: Record<number, string> = {
   [EXIT_SUCCESS]: 'EXIT_SUCCESS',
@@ -10,4 +11,5 @@ export const EXIT_CODE_LABELS: Record<number, string> = {
   [EXIT_TIMEOUT]: 'EXIT_TIMEOUT',
   [EXIT_HOOK_BLOCKED]: 'EXIT_HOOK_BLOCKED',
   [EXIT_RATE_LIMIT]: 'EXIT_RATE_LIMIT',
+  [EXIT_TAMPER]: 'EXIT_TAMPER',
 };

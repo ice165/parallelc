@@ -33,12 +33,12 @@ export function updatePredictionRecord(
   db: Database.Database,
   taskId: string,
   actualFiles: string[],
-): void {
+): number {
   const row = db.prepare(
     'SELECT expected_files FROM prediction_records WHERE task_id = ?',
   ).get(taskId) as Record<string,string> | undefined;
 
-  if (!row) return;
+  if (!row) return 0;
 
   const expected: string[] = JSON.parse(row['expected_files']!);
   const intersect = expected.filter(f => actualFiles.includes(f)).length;
@@ -50,6 +50,9 @@ export function updatePredictionRecord(
     SET actual_files = ?, accuracy = ?
     WHERE task_id = ?
   `).run(JSON.stringify(actualFiles), accuracy, taskId);
+
+  // Return accuracy so callers can feed into F1BetaTracker
+  return accuracy;
 }
 
 export function getPredictionAccuracy(
