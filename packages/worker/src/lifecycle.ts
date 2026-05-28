@@ -96,7 +96,8 @@ export function collectModifiedFiles(writeRoot: string): string[] {
       .filter((f) => f.length > 0);
 
     return [...new Set([...tracked, ...untracked])];
-  } catch {
+  } catch (err) {
+    console.warn(`[lifecycle] collectModifiedFiles failed in ${writeRoot}:`, err instanceof Error ? err.message : err);
     return [];
   }
 }

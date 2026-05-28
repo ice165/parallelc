@@ -14,10 +14,11 @@ export interface BatchReviewResult {
   results: CeoReviewResult[];
 }
 
+import { execFileSync } from 'child_process';
+
 function getTaskDiff(repoRoot: string): string {
   try {
-    const { execSync } = require('child_process');
-    return execSync('git diff HEAD', {
+    return execFileSync('git', ['diff', 'HEAD'], {
       cwd: repoRoot, encoding: 'utf-8', timeout: 10_000,
     });
   } catch {

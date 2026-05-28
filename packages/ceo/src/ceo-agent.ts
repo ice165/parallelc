@@ -1,6 +1,7 @@
 import type { CeoReviewInput, CeoFeedback, CeoReviewResult } from '@parallelc/shared';
 import { MAX_REVIEW_OUTPUT_TOKENS } from '@parallelc/shared';
 import { matchIntent } from './intent-matcher.js';
+import { parseFeedback } from './feedback-generator.js';
 import { getCeoModel } from './iteration-tracker.js';
 import type { TaskLevel } from '@parallelc/shared';
 
@@ -91,12 +92,14 @@ export async function ceoReview(
       const output = claudeResult.stdout.trim();
       const jsonMatch = output.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
-        const llmFeedback = JSON.parse(jsonMatch[0]) as CeoFeedback;
-        const inputTokens = Math.ceil(prompt.length / 3.5);
-        const outputTokens = Math.ceil(output.length / 3.5);
-        const price = PRICING[model] ?? PRICING['sonnet']!;
-        const cost = (inputTokens / 1_000_000) * price.input + (outputTokens / 1_000_000) * price.output;
-        return { taskId, feedback: llmFeedback, model, tokensUsed: inputTokens + outputTokens, cost };
+        const parsed = parseFeedback(jsonMatch[0]);
+        if (parsed) {
+          const inputTokens = Math.ceil(prompt.length / 3.5);
+          const outputTokens = Math.ceil(output.length / 3.5);
+          const price = PRICING[model] ?? PRICING['sonnet']!;
+          const cost = (inputTokens / 1_000_000) * price.input + (outputTokens / 1_000_000) * price.output;
+          return { taskId, feedback: parsed, model, tokensUsed: inputTokens + outputTokens, cost };
+        }
       }
     }
   } catch { /* LLM call failed, fall through to rule-based result */ }

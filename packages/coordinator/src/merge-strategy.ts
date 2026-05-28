@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import { execSync, execFileSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import fs from 'fs';
 
 export interface ConflictDetail {
@@ -35,10 +35,10 @@ export async function mergeTask(
 
   try {
     // Phase 1: AUTO — 从 Worker 的 write worktree 合并到主仓库
-    const workerHead = execSync(`git -C "${workerWorktree}" rev-parse HEAD`, {
+    const workerHead = execFileSync('git', ['-C', workerWorktree, 'rev-parse', 'HEAD'], {
       stdio: 'pipe', timeout: 10_000,
     }).toString().trim();
-    execSync(`git merge --no-ff --no-edit ${workerHead}`, {
+    execFileSync('git', ['merge', '--no-ff', '--no-edit', workerHead], {
       cwd: repoRoot, stdio: 'pipe', timeout: 30_000,
     });
     const taskRow = db.prepare('SELECT modified_files FROM tasks WHERE id = ?').get(taskId) as Record<string, unknown> | undefined;
@@ -55,7 +55,7 @@ export async function mergeTask(
 
     if (conflictFiles.length === 0) {
       // git merge 失败但无冲突文件 → 其他错误
-      try { execSync('git merge --abort', { cwd: repoRoot, stdio: 'pipe' }); } catch { /* 无 merge 可 abort */ }
+      try { execFileSync('git', ['merge', '--abort'], { cwd: repoRoot, stdio: 'pipe' }); } catch { /* 无 merge 可 abort */ }
       return {
         success: false, strategy: 'BLOCKED', mergedFiles: [], conflicts: [], reportPath: null,
       };
@@ -90,12 +90,12 @@ export async function mergeTask(
           mergedFiles: conflictFiles, conflicts, reportPath: null,
         };
       } catch {
-        execSync('git merge --abort', { cwd: repoRoot, stdio: 'pipe' });
+        execFileSync('git', ['merge', '--abort'], { cwd: repoRoot, stdio: 'pipe' });
       }
     }
 
     // Phase 3: BLOCKED
-    execSync('git merge --abort', { cwd: repoRoot, stdio: 'pipe' });
+    execFileSync('git', ['merge', '--abort'], { cwd: repoRoot, stdio: 'pipe' });
     return {
       success: false, strategy: 'BLOCKED', mergedFiles: [], conflicts, reportPath: null,
     };
@@ -104,7 +104,7 @@ export async function mergeTask(
 
 function getConflictFiles(repoRoot: string): string[] {
   try {
-    const out = execSync('git diff --name-only --diff-filter=U', {
+    const out = execFileSync('git', ['diff', '--name-only', '--diff-filter=U'], {
       cwd: repoRoot, encoding: 'utf-8', stdio: 'pipe',
     });
     return out.trim().split('\n').filter(Boolean);
@@ -113,7 +113,7 @@ function getConflictFiles(repoRoot: string): string[] {
 
 function detectConflictLines(repoRoot: string, file: string): string {
   try {
-    const out = execSync(`git diff --unified=0 ${file}`, {
+    const out = execFileSync('git', ['diff', '--unified=0', file], {
       cwd: repoRoot, encoding: 'utf-8', stdio: 'pipe',
     });
     const matches = out.match(/@@\s+[-+]\d+(?:,\d+)?\s+[-+]\d+(?:,\d+)?\s+@@/g);

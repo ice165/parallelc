@@ -1,4 +1,4 @@
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import path from 'path';
 import type { SpawnWorkerOptions, SpawnWorkerResult } from '@parallelc/shared';
 
@@ -17,15 +17,15 @@ export async function spawnWorker(
 
   try {
     // 1. 只读完整 Worktree（detached HEAD，避免分支名冲突）
-    execSync(`git worktree add --detach "${readonlyRoot}" ${baseBranch}`, {
+    execFileSync('git', ['worktree', 'add', '--detach', readonlyRoot, baseBranch], {
       cwd: repoRoot,
       stdio: 'pipe',
       timeout: 30_000,
     });
 
     // 2. 稀疏写区 Worktree（不检出，稀疏模式仅填充预测目录）
-    execSync(
-      `git worktree add --no-checkout --detach "${writeRoot}" ${baseBranch}`,
+    execFileSync(
+      'git', ['worktree', 'add', '--no-checkout', '--detach', writeRoot, baseBranch],
       {
         cwd: repoRoot,
         stdio: 'pipe',
@@ -39,21 +39,21 @@ export async function spawnWorker(
     ];
 
     // 4. Sparse checkout init
-    execSync('git sparse-checkout init --cone', {
+    execFileSync('git', ['sparse-checkout', 'init', '--cone'], {
       cwd: writeRoot,
       stdio: 'pipe',
       timeout: 10_000,
     });
 
     // 5. 设置稀疏检出目录
-    execSync(`git sparse-checkout set ${dirnames.join(' ')}`, {
+    execFileSync('git', ['sparse-checkout', 'set', ...dirnames], {
       cwd: writeRoot,
       stdio: 'pipe',
       timeout: 10_000,
     });
 
     // 6. 从 HEAD 树对象读入索引与工作区（遵循 sparse-checkout 规则）
-    execSync('git read-tree -mu HEAD', {
+    execFileSync('git', ['read-tree', '-mu', 'HEAD'], {
       cwd: writeRoot,
       stdio: 'pipe',
       timeout: 30_000,
@@ -79,14 +79,14 @@ export async function cleanupWorktrees(
   const writeRoot = path.join(repoRoot, 'worktrees', `${workerId}-write`);
 
   try {
-    execSync(`git worktree remove --force "${readonlyRoot}"`, {
+    execFileSync('git', ['worktree', 'remove', '--force', readonlyRoot], {
       cwd: repoRoot,
       stdio: 'pipe',
     });
   } catch { /* 目录可能不存在 */ }
 
   try {
-    execSync(`git worktree remove --force "${writeRoot}"`, {
+    execFileSync('git', ['worktree', 'remove', '--force', writeRoot], {
       cwd: repoRoot,
       stdio: 'pipe',
     });

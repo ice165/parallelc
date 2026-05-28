@@ -4,6 +4,7 @@ export {
   createTask,
   casUpdateStatus,
   queryTasksByStatus,
+  queryTaskById,
   getLockedFiles,
   wakeSleepingTasks,
   updateTask,

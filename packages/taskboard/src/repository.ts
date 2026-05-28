@@ -69,7 +69,7 @@ export function createTask(db: Database.Database, input: CreateTaskInput): Task 
   return queryTaskById(db, input.id)!;
 }
 
-function queryTaskById(db: Database.Database, id: string): Task | null {
+export function queryTaskById(db: Database.Database, id: string): Task | null {
   const row = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id) as Record<string, unknown> | undefined;
   if (!row) return null;
   return rowToTask(row);

@@ -5,6 +5,7 @@ import { execSync } from 'child_process';
 import {
   getLockedFiles,
   queryTasksByStatus,
+  queryTaskById,
   casUpdateStatus,
   updateTask,
   wakeSleepingTasks,
@@ -59,6 +60,7 @@ const DEFAULT_MAX_RATE_LIMIT_RETRIES = 5;
 let f1Tracker: F1BetaTracker | null = null;
 let costTracker: CostTracker | null = null;
 let auditLogger: AuditLogger | null = null;
+let ceoReviewInProgress = false;
 
 export function startScheduler(config: SchedulerConfig): void {
   const {
@@ -101,9 +103,14 @@ export function startScheduler(config: SchedulerConfig): void {
     tick++;
     const dispatch = dispatchTick(db, pool, repoRoot, maxWorkers, starvationThresholdMs);
     const reap = reapTick(db, pool, repoRoot, dbPath);
-    const ceoReview = ceoReviewTick(db, pool, repoRoot, dbPath, apiKeys[0] ?? '').catch(err => {
-      console.error('[CEO] Review tick error:', err.message);
-    });
+    if (!ceoReviewInProgress && queryTasksByStatus(db, 'REVIEW_PENDING').length > 0) {
+      ceoReviewInProgress = true;
+      ceoReviewTick(db, pool, repoRoot, dbPath, apiKeys[0] ?? '').finally(() => {
+        ceoReviewInProgress = false;
+      }).catch(err => {
+        console.error('[CEO] Review tick error:', err.message);
+      });
+    }
     const woken = wakeTick(db);
 
     if (dispatch.dispatched > 0 || reap.done + reap.failed + reap.sleeping > 0 || woken > 0) {
@@ -420,9 +427,3 @@ export function wakeTick(db: Database.Database): number {
   return wakeSleepingTasks(db);
 }
 
-/** 从 DB 按 ID 查询任务 */
-function queryTaskById(db: Database.Database, id: string): Task | null {
-  const row = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id) as Record<string, unknown> | undefined;
-  if (!row) return null;
-  return row as unknown as Task;
-}
